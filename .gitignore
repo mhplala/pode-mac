@@ -1,0 +1,32 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Xcode user-local state (commit the .xcodeproj itself, ignore per-user bits)
+**/xcuserdata/
+**/*.xcuserstate
+**/UserInterfaceState.xcuserstate
+*.moved-aside
+*.swp
+*.hmap
+
+# Build / derived
+DerivedData/
+build/
+*.app
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# IDE
+.idea/
+.vscode/
+
+# Logs / scratch
+*.log
+*.tmp
