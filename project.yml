@@ -13,6 +13,10 @@ settings:
     ENABLE_HARDENED_RUNTIME: YES
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
+packages:
+  WhisperKit:
+    url: https://github.com/argmaxinc/WhisperKit
+    from: "0.9.0"
 targets:
   Pode:
     type: application
@@ -20,6 +24,8 @@ targets:
     deploymentTarget: "14.0"
     sources:
       - path: Pode
+    dependencies:
+      - package: WhisperKit
     info:
       path: Pode/Info.plist
       properties:

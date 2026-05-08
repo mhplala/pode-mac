@@ -209,12 +209,30 @@ private final class RSSParserDelegate: NSObject, XMLParserDelegate {
 
     private func stripHTML(_ s: String) -> String {
         var result = s
-        // crude tag strip
+
+        // Convert block / break tags to newlines BEFORE stripping the rest,
+        // so paragraph structure survives.
+        let brRegex = try? NSRegularExpression(pattern: "<\\s*br\\s*/?\\s*>", options: .caseInsensitive)
+        if let r = brRegex {
+            let range = NSRange(result.startIndex..., in: result)
+            result = r.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "\n")
+        }
+        let blockRegex = try? NSRegularExpression(
+            pattern: "</\\s*(p|div|li|h[1-6]|blockquote|tr)\\s*>",
+            options: .caseInsensitive
+        )
+        if let r = blockRegex {
+            let range = NSRange(result.startIndex..., in: result)
+            result = r.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "\n\n")
+        }
+
+        // Strip remaining tags
         let tagRegex = try? NSRegularExpression(pattern: "<[^>]+>", options: [])
         if let r = tagRegex {
             let range = NSRange(result.startIndex..., in: result)
-            result = r.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: " ")
+            result = r.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
         }
+
         result = result
             .replacingOccurrences(of: "&nbsp;", with: " ")
             .replacingOccurrences(of: "&amp;", with: "&")
@@ -223,10 +241,26 @@ private final class RSSParserDelegate: NSObject, XMLParserDelegate {
             .replacingOccurrences(of: "&quot;", with: "\"")
             .replacingOccurrences(of: "&#39;", with: "'")
             .replacingOccurrences(of: "&#x27;", with: "'")
-        result = result.components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-        return result
+
+        // Collapse intra-line whitespace but preserve newlines.
+        let lines = result.components(separatedBy: "\n").map { line in
+            line.components(separatedBy: .whitespaces)
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+        }
+        // Cap consecutive blank lines at 1 (= one blank => paragraph break).
+        var out: [String] = []
+        var blanks = 0
+        for line in lines {
+            if line.isEmpty {
+                blanks += 1
+                if blanks <= 1 { out.append("") }
+            } else {
+                blanks = 0
+                out.append(line)
+            }
+        }
+        return out.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

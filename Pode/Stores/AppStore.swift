@@ -84,6 +84,12 @@ final class AppStore {
             case .glassBlur: if let v = r.doubleValue { s.glassBlur = v }
             case .showSecondaryBloom: if let v = r.boolValue { s.showSecondaryBloom = v }
             case .userName: if let v = r.stringValue { s.userName = v }
+            case .transcribeEngine: if let v = r.stringValue { s.transcribeEngine = v }
+            case .localWhisperModel: if let v = r.stringValue { s.localWhisperModel = v }
+            case .localWhisperPicked: if let v = r.boolValue { s.localWhisperPicked = v }
+            case .inferSpeakers: if let v = r.boolValue { s.inferSpeakers = v }
+            case .transcribeLanguage: if let v = r.stringValue { s.transcribeLanguage = v }
+            case .simplifiedChinese: if let v = r.boolValue { s.simplifiedChinese = v }
             case .none: break
             }
         }
@@ -103,6 +109,12 @@ final class AppStore {
             (.glassBlur, nil, s.glassBlur, nil),
             (.showSecondaryBloom, nil, nil, s.showSecondaryBloom),
             (.userName, s.userName, nil, nil),
+            (.transcribeEngine, s.transcribeEngine, nil, nil),
+            (.localWhisperModel, s.localWhisperModel, nil, nil),
+            (.localWhisperPicked, nil, nil, s.localWhisperPicked),
+            (.inferSpeakers, nil, nil, s.inferSpeakers),
+            (.transcribeLanguage, s.transcribeLanguage, nil, nil),
+            (.simplifiedChinese, nil, nil, s.simplifiedChinese),
         ]
         for (key, str, dbl, bln) in pairs {
             let keyString = key.rawValue

@@ -1,5 +1,61 @@
 import SwiftUI
 import SwiftData
+import AppKit
+
+// Reposition the macOS traffic-light buttons. With `.hiddenTitleBar`, the
+// system places them at ~ (12, 14) from the top-left of the window, which
+// can collide with the panel's top-left corner when the panel is inset by
+// 12pt. We push them down + right so they sit comfortably inside whatever
+// corner area the panel happens to expose.
+private struct TrafficLightPositioner: NSViewRepresentable {
+    let target: CGPoint  // desired (x, y) of the close button's origin in title-bar coords (y from bottom)
+
+    func makeCoordinator() -> Coordinator { Coordinator(target: target) }
+
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView()
+        DispatchQueue.main.async {
+            context.coordinator.attach(window: v.window)
+        }
+        return v
+    }
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.target = target
+        context.coordinator.apply()
+    }
+
+    final class Coordinator {
+        var target: CGPoint
+        weak var window: NSWindow?
+        private var frameObs: NSKeyValueObservation?
+
+        init(target: CGPoint) { self.target = target }
+
+        func attach(window: NSWindow?) {
+            guard let window, self.window !== window else { return }
+            self.window = window
+            apply()
+            // Re-apply on resize — system layout may rewrite button frames.
+            frameObs = window.observe(\.frame, options: [.new]) { [weak self] _, _ in
+                DispatchQueue.main.async { self?.apply() }
+            }
+        }
+
+        func apply() {
+            guard let window else { return }
+            let types: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
+            let buttons = types.compactMap { window.standardWindowButton($0) }
+            guard buttons.count == 3 else { return }
+            // Preserve native spacing.
+            let spacing = max(0, buttons[1].frame.minX - buttons[0].frame.maxX)
+            let width = buttons[0].frame.width
+            for (i, b) in buttons.enumerated() {
+                let x = target.x + CGFloat(i) * (width + spacing)
+                b.setFrameOrigin(CGPoint(x: x, y: target.y))
+            }
+        }
+    }
+}
 
 struct ContentView: View {
     @Environment(AppStore.self) private var store
@@ -21,7 +77,7 @@ struct ContentView: View {
                     .frame(maxHeight: .infinity)
                     .padding(.bottom, 12)
 
-                ZStack {
+                ZStack(alignment: .bottom) {
                     viewSwitch
                         .id(viewIdentifier)
                         .transition(
@@ -30,12 +86,14 @@ struct ContentView: View {
                                 removal: .opacity
                             )
                         )
+
+                    PlayerDockView()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .animation(.easeOut(duration: 0.22), value: viewIdentifier)
             }
             .padding(.horizontal, 12)
-            .padding(.top, 8)
+            .padding(.top, 12)
 
             // Toasts
             VStack(spacing: 8) {
@@ -53,9 +111,17 @@ struct ContentView: View {
             }
             .padding(.bottom, 100)
             .frame(maxWidth: .infinity)
-
-            PlayerDockView()
         }
+        .ignoresSafeArea(.all, edges: .top)
+        .background(
+            // Title-bar coords use NSView default isFlipped = false, so y is
+            // measured from the bottom of the title-bar view (height ≈ 28).
+            // Native default is y ≈ 6 (centred light). Lower y → lights
+            // pushed visually DOWN. We want them sitting on top of the panel,
+            // around 22pt from window top → y = 28 - 22 + 7(radius) = 13 ish.
+            // After tuning by eye, 4 looks right.
+            TrafficLightPositioner(target: CGPoint(x: 22, y: -2))
+        )
     }
 
     @ViewBuilder

@@ -39,6 +39,69 @@ enum Fmt {
         return String(format: "%.1f MB", mb)
     }
 
+    /// Convert Traditional Chinese characters to Simplified using Apple's
+    /// built-in `Hant-Hans` transform. Non-Chinese characters pass through
+    /// unchanged, so it's safe to call on any text.
+    static func toSimplifiedChinese(_ s: String) -> String {
+        let mut = NSMutableString(string: s)
+        CFStringTransform(mut, nil, "Hant-Hans" as CFString, false)
+        return mut as String
+    }
+
+    /// Insert paragraph breaks into a wall-of-text description. If the source
+    /// already has reasonable paragraph structure (≥3 blank-line breaks) we
+    /// leave it alone; otherwise we split on sentence terminators (Chinese
+    /// 。！？ or English . ! ?) and group every ~3 sentences (or ~180 chars)
+    /// into a paragraph.
+    static func segmented(_ s: String) -> String {
+        let existingBreaks = s.components(separatedBy: "\n\n").count - 1
+        if existingBreaks >= 3 { return s }
+
+        let terminators: Set<Character> = ["。", "！", "？", "!", "?"]
+        var sentences: [String] = []
+        var current = ""
+        for ch in s {
+            current.append(ch)
+            if terminators.contains(ch) {
+                let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { sentences.append(trimmed) }
+                current = ""
+            } else if ch == "." {
+                // English period — only treat as terminator if followed by
+                // whitespace or end-of-string. We approximate by checking the
+                // last non-space character context at flush time.
+                let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                // Heuristic: terminate if the period isn't part of "x.y" digits.
+                let countDigitsAround = trimmed.suffix(3).filter { $0.isNumber }.count
+                if countDigitsAround < 2 {
+                    sentences.append(trimmed)
+                    current = ""
+                }
+            }
+        }
+        let tail = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !tail.isEmpty { sentences.append(tail) }
+
+        if sentences.count < 4 { return s }
+
+        var paragraphs: [String] = []
+        var buf: [String] = []
+        var bufLen = 0
+        for sentence in sentences {
+            buf.append(sentence)
+            bufLen += sentence.count
+            if buf.count >= 3 || bufLen >= 180 {
+                paragraphs.append(buf.joined(separator: " "))
+                buf.removeAll()
+                bufLen = 0
+            }
+        }
+        if !buf.isEmpty {
+            paragraphs.append(buf.joined(separator: " "))
+        }
+        return paragraphs.joined(separator: "\n\n")
+    }
+
     static let coverPalette: [(String, String)] = [
         ("#1f2530", "#3a4759"),
         ("#3a2a1d", "#6b4626"),

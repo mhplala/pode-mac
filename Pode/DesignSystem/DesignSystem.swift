@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 // MARK: - Tokens
 
@@ -25,8 +26,26 @@ enum Danger {
 }
 
 extension Font {
+    /// New York for Latin, with PingFang SC as the cascade fallback for CJK.
+    /// SwiftUI's stock `.system(design: .serif)` falls back to a Songti-style
+    /// serif for Chinese, which we don't want — we want sans (PingFang) for CJK.
     static func serif(_ size: CGFloat, weight: Font.Weight = .medium) -> Font {
-        .system(size: size, weight: weight, design: .serif)
+        let nsWeight = NSFontWeight.from(weight)
+        let baseDesc = NSFont.systemFont(ofSize: size, weight: nsWeight)
+            .fontDescriptor
+            .withDesign(.serif) ?? NSFont.systemFont(ofSize: size, weight: nsWeight).fontDescriptor
+
+        // PingFang SC at the same point size is appended to the cascade list.
+        // The OS consults this list when the primary font lacks a glyph (i.e.
+        // for CJK characters, since New York doesn't ship CJK glyphs).
+        let pingfang = NSFontDescriptor(fontAttributes: [.name: "PingFangSC-Regular"])
+        let cascaded = baseDesc.addingAttributes([
+            .cascadeList: [pingfang]
+        ])
+        if let nsFont = NSFont(descriptor: cascaded, size: size) {
+            return Font(nsFont)
+        }
+        return .system(size: size, weight: weight, design: .serif)
     }
     static func sans(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
         .system(size: size, weight: weight, design: .default)
@@ -36,10 +55,27 @@ extension Font {
     }
 }
 
+private enum NSFontWeight {
+    static func from(_ w: Font.Weight) -> NSFont.Weight {
+        switch w {
+        case .ultraLight: return .ultraLight
+        case .thin: return .thin
+        case .light: return .light
+        case .regular: return .regular
+        case .medium: return .medium
+        case .semibold: return .semibold
+        case .bold: return .bold
+        case .heavy: return .heavy
+        case .black: return .black
+        default: return .regular
+        }
+    }
+}
+
 // MARK: - Glass
 
 enum GlassVariant {
-    case panel, sidebar, chip, dock, deep
+    case panel, sidebar, chip, dock, deep, tile
 }
 
 // Liquid-glass surfaces. We use `.ultraThinMaterial` (most translucent) and
@@ -58,6 +94,7 @@ struct GlassBackground: View {
             case .chip:    return 0.20
             case .dock:    return 0.22
             case .deep:    return 0.10
+            case .tile:    return 0.10
             }
         }()
         Group {
@@ -73,7 +110,7 @@ struct GlassBackground: View {
                 Capsule()
                     .fill(.ultraThinMaterial)
                     .overlay(Capsule().fill(tint.opacity(tintOpacity)))
-            case .deep:
+            case .deep, .tile:
                 RoundedRectangle(cornerRadius: r, style: .continuous)
                     .fill(.ultraThinMaterial)
                     .overlay(
@@ -101,8 +138,14 @@ struct GlassBackground: View {
 
     private func cornerRadiusFor(_ v: GlassVariant) -> CGFloat {
         switch v {
-        case .panel, .sidebar, .dock: return 18
+        // Sidebar's top-left corner has the macOS traffic-light buttons sitting
+        // on top of it. We deliberately keep this radius small so the buttons
+        // (centred near 12, 14) sit *inside* the curve concentrically — match
+        // Apple's Finder / Notes style.
+        case .sidebar: return 12
+        case .panel, .dock: return 18
         case .deep: return 14
+        case .tile: return 28
         case .chip: return 999
         }
     }
@@ -117,6 +160,77 @@ struct AnyShape: Shape {
 extension View {
     func glass(_ variant: GlassVariant) -> some View {
         background(GlassBackground(variant: variant))
+    }
+}
+
+// MARK: - Glass scroll
+//
+// Wraps a ScrollView with hidden system indicators and an overlaid
+// ultraThinMaterial thumb, matching the rest of the liquid-glass surfaces.
+
+struct GlassScroll<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+
+    @State private var contentH: CGFloat = 0
+    @State private var offsetY: CGFloat = 0
+    @State private var viewportH: CGFloat = 0
+    @State private var hovering = false
+
+    var body: some View {
+        GeometryReader { outer in
+            ScrollView {
+                content()
+                    .background(
+                        GeometryReader { inner in
+                            Color.clear.preference(
+                                key: GlassScrollMetricsKey.self,
+                                value: GlassScrollMetrics(
+                                    offsetY: -inner.frame(in: .named("glassScroll")).origin.y,
+                                    contentH: inner.size.height
+                                )
+                            )
+                        }
+                    )
+            }
+            .coordinateSpace(name: "glassScroll")
+            .scrollIndicators(.hidden)
+            .onPreferenceChange(GlassScrollMetricsKey.self) { m in
+                offsetY = m.offsetY
+                contentH = m.contentH
+            }
+            .onAppear { viewportH = outer.size.height }
+            .onChange(of: outer.size.height) { _, new in viewportH = new }
+            .overlay(alignment: .topTrailing) {
+                if contentH > viewportH + 4 {
+                    let thumbH = max(48, viewportH * (viewportH / contentH))
+                    let maxOffset = max(1, contentH - viewportH)
+                    let progress = max(0, min(1, offsetY / maxOffset))
+                    let thumbY = progress * (viewportH - thumbH)
+                    Capsule()
+                        .fill(.ultraThinMaterial)
+                        .overlay(Capsule().fill(Color.white.opacity(0.18)))
+                        .overlay(
+                            Capsule().stroke(Color.white.opacity(0.35), lineWidth: 0.5)
+                        )
+                        .frame(width: hovering ? 8 : 5, height: thumbH)
+                        .offset(x: -4, y: thumbY)
+                        .animation(.easeOut(duration: 0.12), value: hovering)
+                        .onHover { hovering = $0 }
+                }
+            }
+        }
+    }
+}
+
+private struct GlassScrollMetrics: Equatable {
+    var offsetY: CGFloat = 0
+    var contentH: CGFloat = 0
+}
+
+private struct GlassScrollMetricsKey: PreferenceKey {
+    static var defaultValue = GlassScrollMetrics()
+    static func reduce(value: inout GlassScrollMetrics, nextValue: () -> GlassScrollMetrics) {
+        value = nextValue()
     }
 }
 
@@ -159,7 +273,9 @@ struct CoverView: View {
                     .padding(6)
             }
         }
-        .frame(width: size, height: size)
+        .aspectRatio(1, contentMode: .fit)
+        .frame(maxWidth: size, maxHeight: size)
+        .compositingGroup()
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         .shadow(color: .black.opacity(0.18), radius: 6, x: 0, y: 4)
     }

@@ -7,7 +7,7 @@ struct ListenNowView: View {
     @Query(sort: [SortDescriptor(\Episode.pubDate, order: .reverse)]) private var episodes: [Episode]
 
     var body: some View {
-        ScrollView {
+        GlassScroll {
             VStack(alignment: .leading, spacing: 0) {
                 EyebrowText(text: Fmt.date(.now))
                     .padding(.bottom, 10)
@@ -151,7 +151,7 @@ private struct FeaturedCard: View {
     var body: some View {
         if let show = episode.show {
             HStack(alignment: .top, spacing: 28) {
-                CoverView(artworkUrl: show.artworkUrl, title: show.title, size: 260, radius: 16)
+                CoverView(artworkUrl: show.artworkUrl, title: show.title, size: 260, radius: 26)
 
                 VStack(alignment: .leading, spacing: 0) {
                     EyebrowText(text: "Featured · \(show.title)")
@@ -237,7 +237,7 @@ private struct InProgressCard: View {
                 store.view = .episode(episode.id)
             } label: {
                 HStack(spacing: 14) {
-                    CoverView(artworkUrl: show.artworkUrl, title: show.title, size: 64, radius: 10)
+                    CoverView(artworkUrl: show.artworkUrl, title: show.title, size: 64, radius: 14)
                     VStack(alignment: .leading, spacing: 0) {
                         Text(show.title.uppercased())
                             .font(.mono(11, weight: .semibold))
@@ -275,7 +275,7 @@ private struct InProgressCard: View {
                     }
                 }
                 .padding(14)
-                .glass(.deep)
+                .glass(.tile)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -360,21 +360,20 @@ private struct ShowTile: View {
             store.view = .show(show.id)
         } label: {
             VStack(alignment: .leading, spacing: 0) {
-                CoverView(artworkUrl: show.artworkUrl, title: show.title, size: 140, radius: 14)
+                CoverView(artworkUrl: show.artworkUrl, title: show.title, size: 140, radius: 18)
                     .frame(maxWidth: .infinity)
-                    .aspectRatio(1, contentMode: .fit)
                 Text(show.title)
                     .font(.serif(14, weight: .medium))
                     .foregroundColor(Ink.primary)
-                    .lineLimit(2)
+                    .lineLimit(2, reservesSpace: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, 10)
-                if !show.host.isEmpty {
-                    Text(show.host)
-                        .font(.sans(11.5))
-                        .foregroundColor(Ink.tertiary)
-                        .lineLimit(1)
-                        .padding(.top, 2)
-                }
+                Text(show.host.isEmpty ? " " : show.host)
+                    .font(.sans(11.5))
+                    .foregroundColor(Ink.tertiary)
+                    .lineLimit(1, reservesSpace: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 2)
             }
             .contentShape(Rectangle())
         }

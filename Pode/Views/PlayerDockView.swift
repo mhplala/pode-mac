@@ -27,6 +27,8 @@ struct PlayerDockView: View {
                 }
                 dock(ep: ep, show: show)
             }
+            .frame(maxWidth: 880)
+            .frame(maxWidth: .infinity, alignment: .center)
             .padding(.horizontal, 16)
             .padding(.bottom, 12)
         }
@@ -34,14 +36,15 @@ struct PlayerDockView: View {
 
     @ViewBuilder
     private func dock(ep: Episode, show: Show) -> some View {
-        HStack(spacing: 18) {
+        HStack(spacing: 16) {
             CoverMeta(episode: ep, show: show, store: store)
-                .frame(width: 280, alignment: .leading)
+                .frame(width: 240, alignment: .leading)
 
             VStack(spacing: 6) {
                 TransportRow(store: store)
                 ScrubberRow(episode: ep, store: store)
             }
+            .frame(maxWidth: .infinity)
 
             RightCluster(
                 episode: ep,
@@ -49,7 +52,7 @@ struct PlayerDockView: View {
                 showTranscript: $showTranscript,
                 hasTranscript: !ep.transcriptLines.isEmpty
             )
-            .frame(width: 280)
+            .frame(width: 240)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -119,11 +122,14 @@ private struct ScrubberRow: View {
 
     var body: some View {
         let dur = max(episode.duration, store.player.duration)
+        let wide = dur >= 3600
+        let timeWidth: CGFloat = wide ? 62 : 44
         HStack(spacing: 10) {
             Text(Fmt.time(store.player.currentTime))
                 .font(.mono(11))
                 .foregroundColor(Ink.tertiary)
-                .frame(width: 44, alignment: .trailing)
+                .lineLimit(1)
+                .frame(width: timeWidth, alignment: .trailing)
 
             Scrubber(currentTime: store.player.currentTime,
                      duration: dur,
@@ -132,7 +138,8 @@ private struct ScrubberRow: View {
             Text(Fmt.time(dur))
                 .font(.mono(11))
                 .foregroundColor(Ink.tertiary)
-                .frame(width: 44, alignment: .leading)
+                .lineLimit(1)
+                .frame(width: timeWidth, alignment: .leading)
         }
     }
 }
@@ -318,7 +325,7 @@ private struct Scrubber: View {
                     .fill(Color.white)
                     .frame(width: 12, height: 12)
                     .shadow(color: .black.opacity(0.15), radius: 2, x: 0, y: 1)
-                    .position(x: max(6, min(geo.size.width - 6, geo.size.width * pct)), y: 3)
+                    .position(x: max(6, min(geo.size.width - 6, geo.size.width * pct)), y: geo.size.height / 2)
             }
             .frame(height: 12)
             .contentShape(Rectangle())

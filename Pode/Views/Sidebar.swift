@@ -117,6 +117,9 @@ struct Sidebar: View {
             .padding(.top, 18)
             .frame(maxHeight: .infinity)
 
+            // Background tasks (transcribe, model download, etc.)
+            TaskPill()
+
             // Footer (avatar + settings)
             HStack(spacing: 10) {
                 ZStack {
@@ -164,7 +167,8 @@ struct Sidebar: View {
             )
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 16)
+        .padding(.top, 28)
+        .padding(.bottom, 16)
         .frame(width: 244)
     }
 

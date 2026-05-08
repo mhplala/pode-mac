@@ -26,6 +26,9 @@ struct EpisodeView: View {
     @State private var transcribeStage: String = ""
     @State private var transcribeError: String? = nil
     @State private var analyzing: Bool = false
+    @State private var pickingModel: Bool = false
+    @State private var pickerSelection: LocalWhisperModel = .balanced
+    @State private var transcribeTaskId: UUID? = nil
 
     @State private var askValue: String = ""
     @State private var askLoading: Bool = false
@@ -42,7 +45,7 @@ struct EpisodeView: View {
     }
 
     var body: some View {
-        ScrollView {
+        GlassScroll {
             VStack(alignment: .leading, spacing: 0) {
                 Button {
                     store.view = .listenNow
@@ -55,13 +58,20 @@ struct EpisodeView: View {
                 .buttonStyle(TextButtonStyle())
 
                 if let ep = episodes.first, let show = ep.show {
-                    HStack(alignment: .top, spacing: 20) {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(alignment: .top, spacing: 20) {
+                            VStack(spacing: 16) {
+                                headerCard(ep: ep, show: show)
+                                tabsCard(ep: ep, show: show)
+                            }
+                            aiInspector(ep: ep, show: show)
+                                .frame(width: 380)
+                        }
                         VStack(spacing: 16) {
                             headerCard(ep: ep, show: show)
+                            aiInspector(ep: ep, show: show)
                             tabsCard(ep: ep, show: show)
                         }
-                        aiInspector(ep: ep, show: show)
-                            .frame(width: 380)
                     }
                     .padding(.top, 8)
                     .padding(.bottom, 140)
@@ -95,7 +105,7 @@ struct EpisodeView: View {
     @ViewBuilder
     private func headerCard(ep: Episode, show: Show) -> some View {
         HStack(alignment: .top, spacing: 22) {
-            CoverView(artworkUrl: show.artworkUrl, title: show.title, size: 140, radius: 14, playing: isPlaying(ep))
+            CoverView(artworkUrl: show.artworkUrl, title: show.title, size: 140, radius: 18, playing: isPlaying(ep))
             VStack(alignment: .leading, spacing: 0) {
                 EyebrowText(text: "\(show.title) · \(Fmt.date(ep.pubDate))")
                     .padding(.bottom, 6)
@@ -111,7 +121,10 @@ struct EpisodeView: View {
                         HStack(spacing: 8) {
                             Image(systemName: isPlaying(ep) ? "pause.fill" : "play.fill")
                             Text(isPlaying(ep) ? "Pause" : (ep.played > 0 ? "Resume" : "Play"))
+                                .lineLimit(1)
                         }
+                        .frame(minWidth: 78)
+                        .fixedSize(horizontal: true, vertical: false)
                     }
                     .buttonStyle(PrimaryButtonStyle())
 
@@ -130,6 +143,11 @@ struct EpisodeView: View {
                     .disabled(ep.transcriptLines.isEmpty)
                 }
                 .padding(.bottom, 16)
+
+                if pickingModel {
+                    modelPickerCard(ep: ep)
+                        .padding(.bottom, 12)
+                }
 
                 if downloading || ep.downloaded {
                     progressBar(ep: ep)
@@ -206,14 +224,16 @@ struct EpisodeView: View {
                 if ep.downloaded {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(Success.primary)
-                    Text("Downloaded")
+                    Text("Downloaded").lineLimit(1)
                 } else if downloading {
-                    Text(downloadProgress > 0 ? "Cancel · \(Int(downloadProgress * 100))%" : "Cancel")
+                    Text(downloadProgress > 0 ? "Cancel · \(Int(downloadProgress * 100))%" : "Cancel").lineLimit(1)
                 } else {
                     Image(systemName: "arrow.down.circle")
-                    Text("Download")
+                    Text("Download").lineLimit(1)
                 }
             }
+            .frame(minWidth: 130)
+            .fixedSize(horizontal: true, vertical: false)
         }
         .buttonStyle(GhostButtonStyle())
     }
@@ -222,23 +242,159 @@ struct EpisodeView: View {
     private func transcribeButton(ep: Episode) -> some View {
         Button {
             if transcribing { return }
-            startTranscribe(ep: ep)
+            handleTranscribeTap(ep: ep)
         } label: {
             HStack(spacing: 6) {
                 if ep.transcribed {
                     Image(systemName: "text.alignleft")
                         .foregroundColor(Success.primary)
-                    Text("Transcribed").foregroundColor(Success.primary)
+                    Text("Transcribed").foregroundColor(Success.primary).lineLimit(1)
                 } else if transcribing {
                     DotPulse()
-                    Text(transcribeStage == "fetching" ? "Fetching audio…" : "Transcribing…")
+                    Text(transcribeStageLabel).lineLimit(1)
                 } else {
                     Image(systemName: "text.alignleft")
-                    Text("Transcribe")
+                    Text("Transcribe").lineLimit(1)
                 }
             }
+            .frame(minWidth: 130)
+            .fixedSize(horizontal: true, vertical: false)
         }
         .buttonStyle(GhostButtonStyle())
+    }
+
+    private var transcribeStageLabel: String {
+        switch transcribeStage {
+        case "fetching":     return "Fetching audio…"
+        case "downloading":  return "Downloading model…"
+        case "loading":      return "Loading model…"
+        case "speakers":     return "Tagging speakers…"
+        default:             return "Transcribing…"
+        }
+    }
+
+    /// First-time user with the local engine sees an inline model picker;
+    /// everyone else jumps straight into transcription.
+    private func handleTranscribeTap(ep: Episode) {
+        if store.settings.transcribeEngine == "local",
+           !store.settings.localWhisperPicked {
+            // Pre-select what's saved (default Balanced).
+            pickerSelection = LocalWhisperModel(rawValue: store.settings.localWhisperModel) ?? .balanced
+            pickingModel = true
+            return
+        }
+        startTranscribe(ep: ep)
+    }
+
+    @ViewBuilder
+    private func modelPickerCard(ep: Episode) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "waveform").foregroundColor(Brand.orange).font(.system(size: 11))
+                EyebrowText(text: "Set up transcription · one-time")
+                Spacer()
+                Button {
+                    pickingModel = false
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(Ink.secondary)
+                        .frame(width: 18, height: 18)
+                        .background(Circle().fill(Color.black.opacity(0.04)))
+                }
+                .buttonStyle(.plain)
+            }
+
+            ForEach(LocalWhisperModel.allCases, id: \.self) { m in
+                modelOptionRow(m)
+            }
+
+            HStack(spacing: 10) {
+                Spacer()
+                Button("Use cloud instead") {
+                    var s = store.settings
+                    s.transcribeEngine = "openai"
+                    store.saveSettings(s)
+                    pickingModel = false
+                    startTranscribe(ep: ep)
+                }
+                .buttonStyle(GhostSmallButtonStyle())
+                Button {
+                    var s = store.settings
+                    s.localWhisperModel = pickerSelection.rawValue
+                    s.localWhisperPicked = true
+                    s.transcribeEngine = "local"
+                    store.saveSettings(s)
+                    pickingModel = false
+                    startTranscribe(ep: ep)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.down.circle").font(.system(size: 11))
+                        Text("Download & Go")
+                    }
+                }
+                .buttonStyle(PrimaryButtonStyle())
+            }
+        }
+        .padding(16)
+        .background(GlassBackground(variant: .deep))
+    }
+
+    @ViewBuilder
+    private func modelOptionRow(_ m: LocalWhisperModel) -> some View {
+        let selected = pickerSelection == m
+        Button {
+            pickerSelection = m
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                    .foregroundColor(selected ? Brand.orange : Ink.tertiary)
+                    .font(.system(size: 14))
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 6) {
+                        Text(m.displayName)
+                            .font(.serif(14, weight: .medium))
+                            .foregroundColor(Ink.primary)
+                        if m == .balanced {
+                            Text("Recommended")
+                                .font(.mono(9.5, weight: .semibold))
+                                .foregroundColor(Brand.orange)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(
+                                    Capsule().fill(Brand.orange.opacity(0.12))
+                                )
+                        }
+                    }
+                    Text("\(m.sizeLabel) · \(m.speedLabel) · \(m.qualityLabel)")
+                        .font(.mono(11))
+                        .foregroundColor(Ink.tertiary)
+                }
+                Spacer()
+                if LocalWhisperService.isModelCached(m) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(Success.primary)
+                        Text("Cached")
+                    }
+                    .font(.mono(10))
+                    .foregroundColor(Ink.secondary)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(selected ? Brand.orange.opacity(0.06) : Color.clear)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(selected ? Brand.orange.opacity(0.25) : Color.black.opacity(0.05),
+                                    lineWidth: 1)
+                    )
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -465,7 +621,7 @@ struct EpisodeView: View {
             .padding(.horizontal, 24)
             .padding(.vertical, ep.transcriptLines.isEmpty ? 0 : 24)
         }
-        .frame(maxHeight: 560)
+        .frame(height: 560)
     }
 
     @ViewBuilder
@@ -473,7 +629,7 @@ struct EpisodeView: View {
         ScrollView {
             VStack(alignment: .leading) {
                 if let desc = ep.episodeDescription, !desc.isEmpty {
-                    Text(desc)
+                    Text(Fmt.segmented(desc))
                         .font(.serif(16))
                         .foregroundColor(Ink.secondary)
                         .lineSpacing(4)
@@ -490,7 +646,7 @@ struct EpisodeView: View {
             }
             .padding(24)
         }
-        .frame(maxHeight: 560)
+        .frame(height: 560)
     }
 
     @ViewBuilder
@@ -549,7 +705,7 @@ struct EpisodeView: View {
             }
             .padding(24)
         }
-        .frame(maxHeight: 560)
+        .frame(height: 560)
     }
 
     private func activeIndex(in sorted: [TranscriptLineModel], ep: Episode) -> Int {
@@ -934,6 +1090,16 @@ struct EpisodeView: View {
     }
 
     private func startTranscribe(ep: Episode) {
+        if store.settings.transcribeEngine == "local" {
+            startLocalTranscribe(ep: ep)
+        } else {
+            startCloudTranscribe(ep: ep)
+        }
+    }
+
+    // MARK: - Cloud (OpenAI Whisper)
+
+    private func startCloudTranscribe(ep: Episode) {
         guard let key = store.settings.openaiKey, !key.isEmpty else {
             store.toast("Add your OpenAI API key in Settings to transcribe")
             store.view = .settings
@@ -944,25 +1110,7 @@ struct EpisodeView: View {
         transcribeStage = ""
         Task { @MainActor in
             do {
-                let audioFileURL: URL
-                if ep.downloaded, let path = ep.localFilePath, FileManager.default.fileExists(atPath: path) {
-                    audioFileURL = URL(fileURLWithPath: path)
-                } else {
-                    transcribeStage = "fetching"
-                    guard let url = URL(string: ep.audioUrl) else {
-                        throw WhisperError.audioFetch("bad URL")
-                    }
-                    let dest = try await AudioDownloader.download(from: url)
-                    let attrs = try? FileManager.default.attributesOfItem(atPath: dest.path)
-                    ep.localFilePath = dest.path
-                    ep.downloaded = true
-                    ep.downloadedAt = .now
-                    if let size = attrs?[.size] as? NSNumber {
-                        ep.audioSize = size.int64Value
-                    }
-                    try? modelContext.save()
-                    audioFileURL = dest
-                }
+                let audioFileURL: URL = try await ensureAudioDownloaded(ep: ep)
 
                 transcribeStage = ""
                 let result = try await WhisperService.transcribe(
@@ -973,7 +1121,10 @@ struct EpisodeView: View {
                 // Replace transcript lines
                 for old in ep.transcriptLines { modelContext.delete(old) }
                 for (idx, line) in result.lines.enumerated() {
-                    let m = TranscriptLineModel(t: line.t, text: line.text, speaker: line.speaker, lineIndex: idx)
+                    let text = store.settings.simplifiedChinese
+                        ? Fmt.toSimplifiedChinese(line.text)
+                        : line.text
+                    let m = TranscriptLineModel(t: line.t, text: text, speaker: line.speaker, lineIndex: idx)
                     m.episode = ep
                     modelContext.insert(m)
                 }
@@ -996,6 +1147,176 @@ struct EpisodeView: View {
             transcribing = false
             transcribeStage = ""
         }
+    }
+
+    // MARK: - Local (WhisperKit)
+
+    private func startLocalTranscribe(ep: Episode) {
+        transcribeError = nil
+        transcribing = true
+        transcribeStage = "fetching"
+        let modelChoice = LocalWhisperModel(rawValue: store.settings.localWhisperModel) ?? .balanced
+
+        // Create a TaskCenter item so the sidebar pill shows progress.
+        let task = TaskItem(
+            kind: .transcribeLocal,
+            title: ep.title.prefix(40).description,
+            subtitle: "Preparing…",
+            progress: 0,
+            status: .running,
+            onCancel: nil
+        )
+        let taskId = TaskCenter.shared.add(task)
+        transcribeTaskId = taskId
+
+        let runTask = Task { @MainActor in
+            do {
+                let audioFileURL = try await ensureAudioDownloaded(ep: ep)
+
+                // Wipe any partial / previous transcript before streaming new lines in.
+                for old in ep.transcriptLines { modelContext.delete(old) }
+                ep.transcribed = false
+                try? modelContext.save()
+
+                let dur = max(ep.duration, 1)
+                let lang = store.settings.transcribeLanguage.isEmpty
+                    ? nil
+                    : store.settings.transcribeLanguage
+                let result = try await LocalWhisperService.shared.transcribe(
+                    audioFileURL: audioFileURL,
+                    model: modelChoice,
+                    language: lang,
+                    audioDuration: dur,
+                    onStage: { stage in
+                        switch stage {
+                        case .checking:
+                            transcribeStage = "fetching"
+                            TaskCenter.shared.setSubtitle(taskId, "Checking model…")
+                        case .downloadingModel(let p):
+                            transcribeStage = "downloading"
+                            TaskCenter.shared.setProgress(
+                                taskId, p,
+                                subtitle: "Downloading model · \(Int(p * 100))%"
+                            )
+                        case .loadingModel:
+                            transcribeStage = "loading"
+                            TaskCenter.shared.setSubtitle(taskId, "Loading model…")
+                        case .transcribing(let p):
+                            transcribeStage = ""
+                            TaskCenter.shared.setProgress(
+                                taskId, p,
+                                subtitle: "Transcribing · \(Int(p * 100))%"
+                            )
+                        }
+                    }
+                )
+
+                // Insert from the final result only — these timestamps are
+                // properly absolute (post `updateSeekOffsetsForResults`),
+                // unlike the chunk-local ones streamed mid-flight.
+                var lineBuffer: [(idx: Int, text: String)] = []
+                for (idx, line) in result.lines.enumerated() {
+                    let text = store.settings.simplifiedChinese
+                        ? Fmt.toSimplifiedChinese(line.text)
+                        : line.text
+                    let m = TranscriptLineModel(
+                        t: line.t, text: text,
+                        speaker: nil, lineIndex: idx
+                    )
+                    m.episode = ep
+                    modelContext.insert(m)
+                    lineBuffer.append((idx, text))
+                }
+                ep.transcribed = true
+                ep.transcribedAt = .now
+                try? modelContext.save()
+
+                // Optional: speaker inference via Claude.
+                if store.settings.inferSpeakers,
+                   let aKey = store.settings.anthropicKey, !aKey.isEmpty,
+                   let show = ep.show, !lineBuffer.isEmpty {
+                    transcribeStage = "speakers"
+                    TaskCenter.shared.setSubtitle(taskId, "Tagging speakers…")
+                    let pairs = lineBuffer.map { (index: $0.idx, text: $0.text) }
+                    do {
+                        let assignments = try await ClaudeService.inferSpeakers(
+                            lines: pairs,
+                            showTitle: show.title,
+                            showHost: show.host,
+                            episodeTitle: ep.title,
+                            apiKey: aKey,
+                            model: store.settings.claudeModel
+                        )
+                        // Apply to SwiftData lines
+                        for line in ep.transcriptLines {
+                            if let s = assignments[line.lineIndex] {
+                                line.speaker = s
+                            }
+                        }
+                        try? modelContext.save()
+                        let count = Set(assignments.values).count
+                        TaskCenter.shared.succeed(
+                            taskId,
+                            subtitle: "Done · \(lineBuffer.count) lines · \(count) speakers"
+                        )
+                        store.toast("Transcribed · \(lineBuffer.count) lines · \(count) speakers")
+                    } catch {
+                        // Speaker inference is best-effort — transcript is fine.
+                        TaskCenter.shared.succeed(
+                            taskId,
+                            subtitle: "Done · \(lineBuffer.count) lines (speakers skipped)"
+                        )
+                        store.toast("Transcribed · \(lineBuffer.count) lines")
+                    }
+                } else {
+                    TaskCenter.shared.succeed(
+                        taskId,
+                        subtitle: "Done · \(lineBuffer.count) lines"
+                    )
+                    store.toast("Transcribed · \(lineBuffer.count) lines")
+                }
+
+                // Auto-run AI analysis (summary / takeaways) if key set.
+                if let aKey = store.settings.anthropicKey, !aKey.isEmpty, let show = ep.show {
+                    runAnalysis(ep: ep, show: show)
+                }
+            } catch let LocalWhisperError.cancelled {
+                store.toast("Transcription cancelled")
+                TaskCenter.shared.cancel(taskId)
+            } catch {
+                transcribeError = "Transcribe failed: \(error.localizedDescription)"
+                TaskCenter.shared.fail(taskId, error.localizedDescription)
+            }
+            transcribing = false
+            transcribeStage = ""
+            transcribeTaskId = nil
+        }
+
+        // Wire cancel callback to actually cancel the Task.
+        TaskCenter.shared.update(taskId) { item in
+            item.onCancel = { runTask.cancel() }
+        }
+    }
+
+    /// Shared helper — downloads the audio file if it's not already on disk.
+    private func ensureAudioDownloaded(ep: Episode) async throws -> URL {
+        if ep.downloaded, let path = ep.localFilePath, FileManager.default.fileExists(atPath: path) {
+            return URL(fileURLWithPath: path)
+        }
+        transcribeStage = "fetching"
+        guard let url = URL(string: ep.audioUrl) else {
+            throw WhisperError.audioFetch("bad URL")
+        }
+        let dest = try await AudioDownloader.download(from: url)
+        let attrs = try? FileManager.default.attributesOfItem(atPath: dest.path)
+        ep.localFilePath = dest.path
+        ep.downloaded = true
+        ep.downloadedAt = .now
+        if let size = attrs?[.size] as? NSNumber {
+            ep.audioSize = size.int64Value
+        }
+        try? modelContext.save()
+        return dest
     }
 
     private func runAnalysis(ep: Episode, show: Show) {

@@ -77,6 +77,58 @@ Return JSON.
         return ClaudeAnalysis(summary: summary, takeaways: Array(takeaways), concepts: concepts)
     }
 
+    /// Infer speaker labels for transcript lines using context (host calling
+    /// guests by name, "you" / "I" patterns, etc). Returns a map of line index
+    /// → speaker name. Anything Claude can't confidently label is omitted.
+    static func inferSpeakers(
+        lines: [(index: Int, text: String)],
+        showTitle: String,
+        showHost: String,
+        episodeTitle: String,
+        apiKey: String,
+        model: String = "claude-haiku-4-5-20251001"
+    ) async throws -> [Int: String] {
+        let key = apiKey.trimmingCharacters(in: .whitespaces)
+        guard !key.isEmpty else { throw ClaudeError.missingKey }
+        // Cap at ~30k chars of input to stay well within haiku context.
+        let numbered = lines.map { "[\($0.index)] \($0.text)" }.joined(separator: "\n")
+        let trimmed = String(numbered.prefix(60000))
+
+        let system = """
+        You are tagging each line of a podcast transcript with the speaker.
+        Use natural names when context makes them clear (host introductions,
+        "罗老师", "请问 X", proper-noun cues). When unsure, fall back to
+        "Speaker A", "Speaker B"… consistently — same person, same label.
+        Output STRICT JSON only:
+        { "assignments": [ { "line": <int>, "speaker": <string> } ] }
+        Only include lines whose speaker is reasonably confident — skip the
+        rest. Don't invent speakers; only use names that appear in the text
+        or generic Speaker A/B/C labels.
+        """
+
+        let user = """
+        Show: \(showTitle)
+        Host: \(showHost.isEmpty ? "(unknown)" : showHost)
+        Episode: \(episodeTitle)
+
+        Lines (numbered):
+        \(trimmed)
+        """
+
+        let raw = try await callClaude(apiKey: key, model: model, maxTokens: 8000,
+                                       system: system, user: user)
+        guard let json = extractJSON(from: raw) else { throw ClaudeError.noJSON }
+        var out: [Int: String] = [:]
+        let assignments = (json["assignments"] as? [[String: Any]]) ?? []
+        for a in assignments {
+            guard let line = a["line"] as? Int,
+                  let speaker = (a["speaker"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !speaker.isEmpty else { continue }
+            out[line] = speaker
+        }
+        return out
+    }
+
     static func ask(question: String, episodeTitle: String, lines: [(index: Int, t: Double, text: String)],
                     apiKey: String, model: String = "claude-haiku-4-5-20251001") async throws -> ClaudeAnswer {
         let key = apiKey.trimmingCharacters(in: .whitespaces)

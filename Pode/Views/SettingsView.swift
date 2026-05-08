@@ -11,7 +11,7 @@ struct SettingsView: View {
     @State private var loaded = false
 
     var body: some View {
-        ScrollView {
+        GlassScroll {
             VStack(alignment: .leading, spacing: 0) {
                 EyebrowText(text: "Configuration").padding(.bottom, 10)
                 Text("Settings")
@@ -20,6 +20,7 @@ struct SettingsView: View {
                     .padding(.bottom, 24)
 
                 userCard.padding(.bottom, 22)
+                transcriptionCard.padding(.bottom, 22)
                 aiKeysCard.padding(.bottom, 22)
                 liquidGlassCard.padding(.bottom, 22)
                 maintenanceCard.padding(.bottom, 22)
@@ -137,6 +138,132 @@ struct SettingsView: View {
         }
         .padding(28)
         .glass(.panel)
+    }
+
+    private var transcriptionCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Transcription")
+                .font(.serif(22, weight: .medium))
+                .foregroundColor(Ink.primary)
+                .padding(.bottom, 4)
+            Text("Local runs on this Mac (free, offline). Cloud uses your OpenAI key.")
+                .font(.sans(13))
+                .foregroundColor(Ink.tertiary)
+                .padding(.bottom, 18)
+
+            field(label: "Engine") {
+                Picker("", selection: $draft.transcribeEngine) {
+                    Text("Local · WhisperKit").tag("local")
+                    Text("Cloud · OpenAI Whisper").tag("openai")
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
+
+            if draft.transcribeEngine == "local" {
+                field(label: "Local model") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(LocalWhisperModel.allCases, id: \.self) { m in
+                            localModelRow(m)
+                        }
+                    }
+                }
+            }
+
+            field(label: "Language") {
+                Picker("", selection: $draft.transcribeLanguage) {
+                    Text("Auto-detect").tag("")
+                    Text("中文 · Chinese").tag("zh")
+                    Text("English").tag("en")
+                    Text("日本語 · Japanese").tag("ja")
+                    Text("한국어 · Korean").tag("ko")
+                    Text("Español").tag("es")
+                    Text("Français").tag("fr")
+                    Text("Deutsch").tag("de")
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .background(fieldBg)
+            }
+
+            HStack {
+                Text("Simplified Chinese output")
+                    .font(.mono(10.5, weight: .semibold))
+                    .tracking(1.3)
+                    .textCase(.uppercase)
+                    .foregroundColor(Ink.tertiary)
+                Spacer()
+                Toggle("", isOn: $draft.simplifiedChinese).labelsHidden()
+            }
+            .padding(.top, 8)
+            Text("Whisper outputs Traditional by default; we convert to Simplified post-transcription. Turn off to keep Traditional.")
+                .font(.sans(11.5))
+                .foregroundColor(Ink.tertiary)
+                .padding(.bottom, 8)
+
+            HStack {
+                Text("Infer speakers (Claude)")
+                    .font(.mono(10.5, weight: .semibold))
+                    .tracking(1.3)
+                    .textCase(.uppercase)
+                    .foregroundColor(Ink.tertiary)
+                Spacer()
+                Toggle("", isOn: $draft.inferSpeakers).labelsHidden()
+            }
+            .padding(.top, 4)
+            Text("After transcription, Claude assigns each line to a speaker using context. ~¥0.50/episode.")
+                .font(.sans(11.5))
+                .foregroundColor(Ink.tertiary)
+        }
+        .padding(28)
+        .glass(.panel)
+    }
+
+    @ViewBuilder
+    private func localModelRow(_ m: LocalWhisperModel) -> some View {
+        let selected = draft.localWhisperModel == m.rawValue
+        let cached = LocalWhisperService.isModelCached(m)
+        HStack(spacing: 12) {
+            Button {
+                draft.localWhisperModel = m.rawValue
+                draft.localWhisperPicked = true
+            } label: {
+                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                    .foregroundColor(selected ? Brand.orange : Ink.tertiary)
+                    .font(.system(size: 14))
+            }
+            .buttonStyle(.plain)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(m.displayName)
+                    .font(.serif(14, weight: .medium))
+                    .foregroundColor(Ink.primary)
+                Text("\(m.sizeLabel) · \(m.speedLabel) · \(m.qualityLabel)")
+                    .font(.mono(11))
+                    .foregroundColor(Ink.tertiary)
+            }
+            Spacer()
+            if cached {
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.circle.fill").foregroundColor(Success.primary)
+                    Text("Downloaded")
+                }
+                .font(.mono(10))
+                .foregroundColor(Ink.secondary)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(selected ? Brand.orange.opacity(0.06) : Color.clear)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(selected ? Brand.orange.opacity(0.25) : Color.black.opacity(0.05),
+                                lineWidth: 1)
+                )
+        )
     }
 
     private var liquidGlassCard: some View {

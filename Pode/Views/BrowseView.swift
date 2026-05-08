@@ -17,7 +17,7 @@ struct BrowseView: View {
     @State private var region: String = "cn"
 
     var body: some View {
-        ScrollView {
+        GlassScroll {
             VStack(alignment: .leading, spacing: 0) {
                 EyebrowText(text: "Discover").padding(.bottom, 10)
                 Text("Browse")
@@ -62,17 +62,9 @@ struct BrowseView: View {
                     )
                     .padding(.bottom, 18)
 
-                    if loadingTop {
-                        Text("Loading…")
-                            .font(.serif(16))
-                            .italic()
-                            .foregroundColor(Ink.tertiary)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .padding(40)
-                            .glass(.panel)
-                    } else if top.isEmpty {
-                        Text("No results — try a different region or genre.")
-                            .font(.serif(15))
+                    if top.isEmpty {
+                        Text(loadingTop ? "Loading…" : "No results — try a different region or genre.")
+                            .font(.serif(loadingTop ? 16 : 15))
                             .italic()
                             .foregroundColor(Ink.tertiary)
                             .frame(maxWidth: .infinity, alignment: .center)
@@ -80,10 +72,11 @@ struct BrowseView: View {
                             .glass(.panel)
                     } else {
                         grid(items: top)
+                            .opacity(loadingTop ? 0.5 : 1)
+                            .animation(.easeOut(duration: 0.18), value: loadingTop)
                     }
                 }
             }
-            .frame(maxWidth: 1240, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 32)
             .padding(.top, 8)
@@ -109,6 +102,8 @@ struct BrowseView: View {
                     runSearch()
                 } label: {
                     Text(searching ? "Searching…" : "Search")
+                        .lineLimit(1)
+                        .frame(minWidth: 78)
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(searching || query.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -126,6 +121,8 @@ struct BrowseView: View {
                     addFeed()
                 } label: {
                     Text(adding ? "Adding…" : "Add feed")
+                        .lineLimit(1)
+                        .frame(minWidth: 78)
                 }
                 .buttonStyle(GhostButtonStyle())
                 .disabled(adding || feedUrlInput.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -219,7 +216,11 @@ struct BrowseView: View {
     }
 
     private func grid(items: [ITunesPodcast]) -> some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 16), count: 4), spacing: 18) {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 220, maximum: 260), spacing: 16, alignment: .top)],
+            alignment: .leading,
+            spacing: 18
+        ) {
             ForEach(items) { p in
                 tile(p)
             }
@@ -229,9 +230,8 @@ struct BrowseView: View {
     private func tile(_ p: ITunesPodcast) -> some View {
         let subbed = isSubscribed(p)
         return VStack(alignment: .leading, spacing: 10) {
-            CoverView(artworkUrl: p.artworkUrl600 ?? p.artworkUrl100, title: p.collectionName, size: 200, radius: 12)
+            CoverView(artworkUrl: p.artworkUrl600 ?? p.artworkUrl100, title: p.collectionName, size: 260, radius: 14)
                 .frame(maxWidth: .infinity)
-                .aspectRatio(1, contentMode: .fit)
             VStack(alignment: .leading, spacing: 2) {
                 Text(p.collectionName)
                     .font(.serif(15, weight: .medium))
@@ -250,7 +250,7 @@ struct BrowseView: View {
                         Image(systemName: "checkmark")
                             .foregroundColor(Success.primary)
                             .font(.system(size: 11))
-                        Text("Subscribed")
+                        Text("Subscribed").lineLimit(1)
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -278,11 +278,11 @@ struct BrowseView: View {
                             ProgressView()
                                 .scaleEffect(0.6)
                                 .tint(.white)
-                            Text("Subscribing…")
+                            Text("Subscribing…").lineLimit(1)
                         } else {
                             Image(systemName: "plus")
                                 .font(.system(size: 11))
-                            Text("Subscribe")
+                            Text("Subscribe").lineLimit(1)
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -292,7 +292,7 @@ struct BrowseView: View {
             }
         }
         .padding(14)
-        .glass(.deep)
+        .glass(.tile)
     }
 
     private func isSubscribed(_ p: ITunesPodcast) -> Bool {

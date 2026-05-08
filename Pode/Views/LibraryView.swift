@@ -20,7 +20,7 @@ struct LibraryView: View {
     @State private var tab: LibraryTab = .shows
 
     var body: some View {
-        ScrollView {
+        GlassScroll {
             VStack(alignment: .leading, spacing: 0) {
                 EyebrowText(text: "Your collection").padding(.bottom, 10)
                 Text("Library")
@@ -43,7 +43,9 @@ struct LibraryView: View {
                             Image(systemName: "arrow.clockwise")
                                 .font(.system(size: 11))
                             Text(store.refreshing ? "Refreshing…" : "Refresh feeds")
+                                .lineLimit(1)
                         }
+                        .frame(minWidth: 100)
                     }
                     .buttonStyle(GhostSmallButtonStyle())
                     .disabled(store.refreshing || shows.isEmpty)
@@ -87,29 +89,33 @@ struct LibraryView: View {
                 .padding(40)
                 .glass(.panel)
             } else {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 22), count: 5), spacing: 32) {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 200, maximum: 240), spacing: 22, alignment: .top)],
+                    alignment: .leading,
+                    spacing: 32
+                ) {
                     ForEach(shows) { show in
                         Button {
                             store.view = .show(show.id)
                         } label: {
                             VStack(alignment: .leading, spacing: 0) {
-                                CoverView(artworkUrl: show.artworkUrl, title: show.title, size: 200, radius: 14)
+                                CoverView(artworkUrl: show.artworkUrl, title: show.title, size: 240, radius: 22)
                                     .frame(maxWidth: .infinity)
-                                    .aspectRatio(1, contentMode: .fit)
                                 Text(show.title)
                                     .font(.serif(16, weight: .medium))
                                     .foregroundColor(Ink.primary)
-                                    .lineLimit(2)
+                                    .lineLimit(2, reservesSpace: true)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(.top, 12)
-                                if !show.host.isEmpty {
-                                    Text(show.host)
-                                        .font(.sans(12.5))
-                                        .foregroundColor(Ink.tertiary)
-                                        .lineLimit(1)
-                                        .padding(.top, 3)
-                                }
+                                Text(show.host.isEmpty ? " " : show.host)
+                                    .font(.sans(12.5))
+                                    .foregroundColor(Ink.tertiary)
+                                    .lineLimit(1, reservesSpace: true)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.top, 3)
                                 if let recent = show.episodes.sorted(by: { $0.pubDate > $1.pubDate }).first {
                                     MetaMono(text: "↓ \(String(recent.title.prefix(28)))\(recent.title.count > 28 ? "…" : "")")
+                                        .lineLimit(1)
                                         .padding(.top, 6)
                                 }
                             }
@@ -176,7 +182,7 @@ struct ShowDetailView: View {
     }
 
     var body: some View {
-        ScrollView {
+        GlassScroll {
             VStack(alignment: .leading, spacing: 0) {
                 Button {
                     store.view = .library
@@ -191,7 +197,7 @@ struct ShowDetailView: View {
 
                 if let show = shows.first {
                     HStack(alignment: .top, spacing: 26) {
-                        CoverView(artworkUrl: show.artworkUrl, title: show.title, size: 200, radius: 16)
+                        CoverView(artworkUrl: show.artworkUrl, title: show.title, size: 200, radius: 22)
                         VStack(alignment: .leading, spacing: 0) {
                             EyebrowText(text: show.category ?? "Podcast").padding(.bottom, 6)
                             Text(show.title)
@@ -224,7 +230,9 @@ struct ShowDetailView: View {
                                         Image(systemName: "arrow.clockwise")
                                             .font(.system(size: 11))
                                         Text(refreshing ? "Refreshing…" : "Refresh")
+                                            .lineLimit(1)
                                     }
+                                    .frame(minWidth: 90)
                                 }
                                 .buttonStyle(GhostButtonStyle())
                                 .disabled(refreshing)

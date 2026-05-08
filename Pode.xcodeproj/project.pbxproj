@@ -7,12 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0F0B1EE44EF9561DB002E86B /* TaskPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = 545A855C73A37EB7598DBA52 /* TaskPill.swift */; };
 		10DB10F07F62E51E3EB63FA1 /* Sidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF8022007F2145E0BF7999E5 /* Sidebar.swift */; };
 		133BF6BAF2C4C94EDA1FEE24 /* BrowseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8FCBF7AAB4890BB82FBD189 /* BrowseView.swift */; };
 		1AADB116EEB62F52AE776BA0 /* KnowledgeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED518C7A00E2E02321FEE55A /* KnowledgeView.swift */; };
 		1D5A3A948E822E19B1B77B20 /* RSSService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 197C530468E4F01A6342CA34 /* RSSService.swift */; };
 		2235912D548984C699E1E6E5 /* AudioPlayerStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 436EF43880969311962F20CD /* AudioPlayerStore.swift */; };
 		25CCFA3AF9E165482875ED79 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC8CF3F4AB691EAC10E6FBAD /* LibraryView.swift */; };
+		29A5D234C4D2F4BEC1A4F35E /* TaskCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DC6C2068B251CEE2021D3BF /* TaskCenter.swift */; };
 		2BE0404EE17015D44041BC4D /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C014A2432D04AED7B87342D /* SettingsView.swift */; };
 		338FB4825D874E7A5016AE25 /* ListenNowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD864C54BB02F38C2C8E3BA0 /* ListenNowView.swift */; };
 		4B29A3705A65CA91209F2372 /* PodeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEFD94F30B61DAACEA38D033 /* PodeApp.swift */; };
@@ -20,6 +22,7 @@
 		51548E7E1D932CAA8F7FF7C4 /* PlayerDockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B0FFB216DE17247EC8A4704 /* PlayerDockView.swift */; };
 		5CAC806E1F1172047331C141 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79AA07FA57730C5CBCB693E9 /* AppSettings.swift */; };
 		5F507154936207A87DAA47D4 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8039DDDBEF472F25C0F5A442 /* ContentView.swift */; };
+		62EA9EF0BD3B80A7B89DE1D9 /* LocalWhisperService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59C11FADA69066F4C30C17FC /* LocalWhisperService.swift */; };
 		631E1BF8DF8C9DC3ED3041BA /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69AFADA1494B3E4C85908CCB /* DesignSystem.swift */; };
 		6E3E40A93BF6923506917B27 /* Contents.json in Resources */ = {isa = PBXBuildFile; fileRef = E1846CBD3FBDC5B2F115F119 /* Contents.json */; };
 		8414413BC7E9F81D1FB3AA0E /* AppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC15CD6703202E2BC755FC85 /* AppStore.swift */; };
@@ -29,6 +32,7 @@
 		E3618C258DBF35A035275FB6 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 06550C5EEF395F90D2DD7AA4 /* Assets.xcassets */; };
 		E95D83496FA8AE93AF97B55E /* EpisodeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1C31EC59DC1DCE3B47C33B8 /* EpisodeView.swift */; };
 		F169D0D93749EB2979283DF5 /* Format.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D108F6BA3C5F0F8E2FB5B74 /* Format.swift */; };
+		F2709F0F1EA6C656271BDB60 /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = 2D60859FFBF5EAB56F584015 /* WhisperKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -36,6 +40,9 @@
 		197C530468E4F01A6342CA34 /* RSSService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RSSService.swift; sourceTree = "<group>"; };
 		2D108F6BA3C5F0F8E2FB5B74 /* Format.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Format.swift; sourceTree = "<group>"; };
 		436EF43880969311962F20CD /* AudioPlayerStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayerStore.swift; sourceTree = "<group>"; };
+		4DC6C2068B251CEE2021D3BF /* TaskCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskCenter.swift; sourceTree = "<group>"; };
+		545A855C73A37EB7598DBA52 /* TaskPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskPill.swift; sourceTree = "<group>"; };
+		59C11FADA69066F4C30C17FC /* LocalWhisperService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalWhisperService.swift; sourceTree = "<group>"; };
 		5AF80B8613BAD3E85AC7BCAB /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		5B0FFB216DE17247EC8A4704 /* PlayerDockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerDockView.swift; sourceTree = "<group>"; };
 		696C837CD5B88117651C6171 /* WhisperService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperService.swift; sourceTree = "<group>"; };
@@ -58,6 +65,17 @@
 		ED518C7A00E2E02321FEE55A /* KnowledgeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnowledgeView.swift; sourceTree = "<group>"; };
 		FC8CF3F4AB691EAC10E6FBAD /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		8D406B71D85FA0F16A2DB513 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F2709F0F1EA6C656271BDB60 /* WhisperKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		1AA4C6F0711F502E10B20301 /* AccentColor.colorset */ = {
@@ -121,6 +139,7 @@
 				5B0FFB216DE17247EC8A4704 /* PlayerDockView.swift */,
 				7C014A2432D04AED7B87342D /* SettingsView.swift */,
 				BF8022007F2145E0BF7999E5 /* Sidebar.swift */,
+				545A855C73A37EB7598DBA52 /* TaskPill.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -140,6 +159,7 @@
 				8867B8A46EFA85F9CFD6DE42 /* ClaudeService.swift */,
 				2D108F6BA3C5F0F8E2FB5B74 /* Format.swift */,
 				A366BB3D16BEADA7E65DC582 /* ITunesService.swift */,
+				59C11FADA69066F4C30C17FC /* LocalWhisperService.swift */,
 				197C530468E4F01A6342CA34 /* RSSService.swift */,
 				696C837CD5B88117651C6171 /* WhisperService.swift */,
 			);
@@ -159,6 +179,7 @@
 			isa = PBXGroup;
 			children = (
 				BC15CD6703202E2BC755FC85 /* AppStore.swift */,
+				4DC6C2068B251CEE2021D3BF /* TaskCenter.swift */,
 			);
 			path = Stores;
 			sourceTree = "<group>";
@@ -172,6 +193,7 @@
 			buildPhases = (
 				D306B41EBF4320541417C853 /* Sources */,
 				477600B8CF35DECB816261CD /* Resources */,
+				8D406B71D85FA0F16A2DB513 /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -179,6 +201,7 @@
 			);
 			name = Pode;
 			packageProductDependencies = (
+				2D60859FFBF5EAB56F584015 /* WhisperKit */,
 			);
 			productName = Pode;
 			productReference = BE4E0165C5BAD57097D4B4B9 /* Pode.app */;
@@ -208,6 +231,9 @@
 			);
 			mainGroup = BB43E1966376EF18F075D544;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				D7CD786D8DC5CB82B54B979D /* XCRemoteSwiftPackageReference "WhisperKit" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 33990D800A9E25DDCDD608DA /* Products */;
 			projectDirPath = "";
@@ -248,12 +274,15 @@
 				1AADB116EEB62F52AE776BA0 /* KnowledgeView.swift in Sources */,
 				25CCFA3AF9E165482875ED79 /* LibraryView.swift in Sources */,
 				338FB4825D874E7A5016AE25 /* ListenNowView.swift in Sources */,
+				62EA9EF0BD3B80A7B89DE1D9 /* LocalWhisperService.swift in Sources */,
 				9D76AB1C4F0D55843811578E /* Models.swift in Sources */,
 				51548E7E1D932CAA8F7FF7C4 /* PlayerDockView.swift in Sources */,
 				4B29A3705A65CA91209F2372 /* PodeApp.swift in Sources */,
 				1D5A3A948E822E19B1B77B20 /* RSSService.swift in Sources */,
 				2BE0404EE17015D44041BC4D /* SettingsView.swift in Sources */,
 				10DB10F07F62E51E3EB63FA1 /* Sidebar.swift in Sources */,
+				29A5D234C4D2F4BEC1A4F35E /* TaskCenter.swift in Sources */,
+				0F0B1EE44EF9561DB002E86B /* TaskPill.swift in Sources */,
 				8EA2466A4464D89920E21A63 /* WhisperService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -456,6 +485,25 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		D7CD786D8DC5CB82B54B979D /* XCRemoteSwiftPackageReference "WhisperKit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/argmaxinc/WhisperKit";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.9.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		2D60859FFBF5EAB56F584015 /* WhisperKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D7CD786D8DC5CB82B54B979D /* XCRemoteSwiftPackageReference "WhisperKit" */;
+			productName = WhisperKit;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 2D7CE7B79DC10B211578ABF7 /* Project object */;
 }
