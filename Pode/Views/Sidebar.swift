@@ -2,8 +2,11 @@ import SwiftUI
 import SwiftData
 
 struct Sidebar: View {
+    @Environment(\.brandAccent) private var accent: Color
+    @Environment(\.appLanguage) private var lang: AppLanguage
     @Environment(AppStore.self) private var store
     @Query(sort: [SortDescriptor(\Show.addedAt, order: .reverse)]) private var allShows: [Show]
+    @FocusState private var searchFocused: Bool
 
     var body: some View {
         @Bindable var store = store
@@ -19,7 +22,7 @@ struct Sidebar: View {
                         Text("e")
                             .font(.serif(17, weight: .regular))
                             .italic()
-                            .foregroundColor(Brand.orange)
+                            .foregroundColor(accent)
                     }
                     Text("podcasts, transcribed")
                         .font(.mono(9.5))
@@ -35,10 +38,29 @@ struct Sidebar: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 11))
                     .foregroundColor(Ink.tertiary)
-                TextField("Filter your shows…", text: $store.search)
+                TextField(
+                    t("Search…", lang),
+                    text: Binding(
+                        get: { store.search },
+                        set: { store.updateSearch($0) }
+                    )
+                )
                     .textFieldStyle(.plain)
                     .font(.sans(12.5))
                     .foregroundColor(Ink.primary)
+                    .focused($searchFocused)
+                    // Hidden ⌘F binding — the visible "⌘F" hint chip next
+                    // to the field actually does something now. Anywhere in
+                    // the app, ⌘F focuses (and selects) the sidebar search.
+                    .background(
+                        Button("") {
+                            searchFocused = true
+                        }
+                        .keyboardShortcut("f", modifiers: .command)
+                        .opacity(0)
+                        .frame(width: 0, height: 0)
+                        .accessibilityHidden(true)
+                    )
                 Text("⌘F")
                     .font(.mono(10))
                     .foregroundColor(Ink.tertiary)
@@ -68,16 +90,16 @@ struct Sidebar: View {
 
             // Primary nav
             VStack(spacing: 1) {
-                NavRow(view: .listenNow, icon: "headphones", label: "Listen Now")
-                NavRow(view: .browse, icon: "globe", label: "Browse")
-                NavRow(view: .library, icon: "rectangle.grid.2x2", label: "Library")
-                NavRow(view: .knowledge, icon: "sparkles", label: "Knowledge", brand: true)
+                NavRow(view: .listenNow, icon: "headphones",        label: L10n.t("Listen Now", language: lang))
+                NavRow(view: .browse,    icon: "globe",             label: L10n.t("Browse",     language: lang))
+                NavRow(view: .library,   icon: "rectangle.grid.2x2", label: L10n.t("Library",    language: lang))
+                NavRow(view: .knowledge, icon: "sparkles",          label: L10n.t("Knowledge",  language: lang), brand: true)
             }
 
             // Shows list
             VStack(spacing: 0) {
                 HStack {
-                    EyebrowText(text: "Shows")
+                    EyebrowText(text: L10n.t("Shows", language: lang).uppercased())
                     Spacer()
                     Button {
                         store.view = .browse
@@ -98,9 +120,12 @@ struct Sidebar: View {
 
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 0) {
-                        let filtered = filteredShows()
-                        if filtered.isEmpty {
-                            Text(allShows.isEmpty ? "No subscriptions yet." : "No matches.")
+                        // The sidebar list is *not* filtered by the search
+                        // field — that field drives an iTunes podcast search
+                        // in the main view. Always render every subscription
+                        // so the user can still navigate while searching.
+                        if allShows.isEmpty {
+                            Text(L10n.t("No subscriptions yet.", language: lang))
                                 .font(.serif(12, weight: .regular))
                                 .italic()
                                 .foregroundColor(Ink.tertiary)
@@ -108,7 +133,7 @@ struct Sidebar: View {
                                 .padding(.top, 4)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        ForEach(filtered) { show in
+                        ForEach(allShows) { show in
                             ShowRow(show: show)
                         }
                     }
@@ -124,7 +149,7 @@ struct Sidebar: View {
             HStack(spacing: 10) {
                 ZStack {
                     Circle()
-                        .fill(LinearGradient(colors: [Brand.orange, Color(hex: "#e8a16c")],
+                        .fill(LinearGradient(colors: [accent, Color(hex: "#e8a16c")],
                                              startPoint: .topLeading, endPoint: .bottomTrailing))
                     Text(store.settings.userName.isEmpty ? "·" : String(store.settings.userName.prefix(1)).uppercased())
                         .font(.serif(13, weight: .medium))
@@ -134,7 +159,9 @@ struct Sidebar: View {
                 .frame(width: 26, height: 26)
 
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(store.settings.userName.isEmpty ? "Set your name" : store.settings.userName)
+                    Text(store.settings.userName.isEmpty
+                         ? L10n.t("Set your name", language: lang)
+                         : store.settings.userName)
                         .font(.sans(12.5, weight: .medium))
                         .foregroundColor(Ink.primary)
                         .lineLimit(1)
@@ -176,21 +203,15 @@ struct Sidebar: View {
         ZStack {
             Image(systemName: "dot.radiowaves.left.and.right")
                 .font(.system(size: 18, weight: .light))
-                .foregroundColor(Brand.orange)
+                .foregroundColor(accent)
         }
         .frame(width: 26, height: 26)
     }
 
-    private func filteredShows() -> [Show] {
-        let q = store.search.lowercased()
-        if q.isEmpty { return allShows }
-        return allShows.filter {
-            $0.title.lowercased().contains(q) || $0.host.lowercased().contains(q)
-        }
-    }
 }
 
 private struct NavRow: View {
+    @Environment(\.brandAccent) private var accent: Color
     @Environment(AppStore.self) private var store
     let view: AppView
     let icon: String
@@ -202,19 +223,23 @@ private struct NavRow: View {
             store.view = view
         } label: {
             HStack(spacing: 11) {
+                // Fixed-width icon frame so labels start at the same x across
+                // rows even though SF Symbol natural widths vary (headphones
+                // is wider than sparkles, etc).
                 Image(systemName: icon)
                     .font(.system(size: 13, weight: .regular))
-                    .foregroundColor(brand && isOn ? Brand.orange : Ink.secondary)
+                    .foregroundColor(brand && isOn ? accent : Ink.secondary)
+                    .frame(width: 16, alignment: .center)
                 Text(label)
                     .font(.sans(13.5, weight: .medium))
                     .foregroundColor(Ink.primary)
                 Spacer()
                 if view == .knowledge {
                     Circle()
-                        .fill(Brand.orange)
+                        .fill(accent)
                         .frame(width: 6, height: 6)
                         .overlay(
-                            Circle().stroke(Brand.orange.opacity(0.14), lineWidth: 3)
+                            Circle().stroke(accent.opacity(0.14), lineWidth: 3)
                         )
                 }
             }
@@ -243,6 +268,7 @@ private struct NavRow: View {
 }
 
 private struct ShowRow: View {
+    @Environment(\.brandAccent) private var accent: Color
     @Environment(AppStore.self) private var store
     let show: Show
 
@@ -262,7 +288,7 @@ private struct ShowRow: View {
                    store.player.isPlaying {
                     Image(systemName: "waveform")
                         .font(.system(size: 11))
-                        .foregroundColor(Brand.orange)
+                        .foregroundColor(accent)
                 }
             }
             .padding(.horizontal, 10)

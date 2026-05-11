@@ -2,6 +2,8 @@ import SwiftUI
 import SwiftData
 
 struct KnowledgeView: View {
+    @Environment(\.appLanguage) private var lang: AppLanguage
+    @Environment(\.brandAccent) private var accent: Color
     @Environment(AppStore.self) private var store
     @Query private var concepts: [Concept]
     @Query(sort: [SortDescriptor(\Episode.pubDate, order: .reverse)]) private var episodes: [Episode]
@@ -28,14 +30,14 @@ struct KnowledgeView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "sparkles")
                         .font(.system(size: 10))
-                        .foregroundColor(Brand.orange)
-                    EyebrowText(text: "What you've learned")
+                        .foregroundColor(accent)
+                    EyebrowText(text: t("What you've learned", lang).uppercased())
                 }
                 .padding(.bottom, 10)
 
                 Group {
-                    Text("Your ") +
-                    Text("canon").italic().foregroundColor(Brand.orange) +
+                    Text(t("Your", lang) + " ") +
+                    Text(t("canon", lang)).italic().foregroundColor(accent) +
                     Text(".")
                 }
                 .font(.serif(56, weight: .medium))
@@ -46,9 +48,9 @@ struct KnowledgeView: View {
                     emptyState
                 } else {
                     HStack(spacing: 18) {
-                        Text("\(concepts.count) concepts")
-                        Text("\(highlights.count) highlights")
-                        Text("\(transcribedCount) transcripts")
+                        Text("\(concepts.count) \(t("concepts", lang))")
+                        Text("\(highlights.count) \(t("highlights", lang))")
+                        Text("\(transcribedCount) \(t("transcripts", lang))")
                     }
                     .font(.mono(12.5))
                     .foregroundColor(Ink.tertiary)
@@ -59,8 +61,8 @@ struct KnowledgeView: View {
                         VStack(alignment: .leading, spacing: 0) {
                             HStack(alignment: .bottom) {
                                 VStack(alignment: .leading, spacing: 6) {
-                                    EyebrowText(text: mode == .galaxy ? "Concept galaxy" : "Concept timeline")
-                                    Text(mode == .galaxy ? "How ideas cluster across your listening" : "When ideas appeared")
+                                    EyebrowText(text: t(mode == .galaxy ? "Concept galaxy" : "Concept timeline", lang).uppercased())
+                                    Text(t(mode == .galaxy ? "How ideas cluster across your listening" : "When ideas appeared", lang))
                                         .font(.serif(22, weight: .medium))
                                         .foregroundColor(Ink.primary)
                                 }
@@ -69,7 +71,7 @@ struct KnowledgeView: View {
                                     if selected == nil {
                                         legend
                                     }
-                                    PillBar(items: [(Mode.galaxy, "Galaxy"), (Mode.timeline, "Timeline")],
+                                    PillBar(items: [(Mode.galaxy, t("Galaxy", lang)), (Mode.timeline, t("Timeline", lang))],
                                             selection: $mode)
                                 }
                             }
@@ -110,7 +112,7 @@ struct KnowledgeView: View {
 
     private var emptyState: some View {
         VStack(spacing: 20) {
-            Text("No concepts yet. Transcribe an episode and run AI analysis — Claude will pull out concepts, and they'll cluster here as a galaxy of what you've heard.")
+            Text(t("No concepts yet. Transcribe an episode and run AI analysis — Claude will pull out concepts, and they'll cluster here as a galaxy of what you've heard.", lang))
                 .font(.serif(17))
                 .italic()
                 .foregroundColor(Ink.secondary)
@@ -122,7 +124,7 @@ struct KnowledgeView: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "rectangle.grid.2x2").font(.system(size: 13))
-                    Text("Open Library")
+                    Text(t("Open Library", lang))
                 }
             }
             .buttonStyle(PrimaryButtonStyle())
@@ -158,10 +160,10 @@ struct KnowledgeView: View {
 
     private var highlightsCard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            EyebrowText(text: "Saved highlights · \(highlights.count)")
+            EyebrowText(text: "\(t("Saved highlights", lang).uppercased()) · \(highlights.count)")
                 .padding(.bottom, 12)
             if highlights.isEmpty {
-                Text("No highlights saved.")
+                Text(t("No highlights saved.", lang))
                     .font(.serif(15))
                     .italic()
                     .foregroundColor(Ink.tertiary)
@@ -208,10 +210,10 @@ struct KnowledgeView: View {
 
     private var steveNoticedCard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            EyebrowText(text: "Steve noticed").padding(.bottom, 12)
+            EyebrowText(text: t("Steve noticed", lang).uppercased()).padding(.bottom, 12)
             let insights = generateInsights()
             if insights.isEmpty {
-                Text("Listen to and analyze a few more episodes — patterns will start showing up here.")
+                Text(t("Listen to and analyze a few more episodes — patterns will start showing up here.", lang))
                     .font(.serif(15))
                     .italic()
                     .foregroundColor(Ink.tertiary)
@@ -223,7 +225,7 @@ struct KnowledgeView: View {
                         } label: {
                             HStack(alignment: .top, spacing: 10) {
                                 Image(systemName: "sparkles")
-                                    .foregroundColor(Brand.orange)
+                                    .foregroundColor(accent)
                                     .font(.system(size: 11))
                                     .padding(.top, 4)
                                 VStack(alignment: .leading, spacing: 3) {
@@ -236,9 +238,9 @@ struct KnowledgeView: View {
                                         .foregroundColor(Ink.primary)
                                         .lineSpacing(3)
                                     if let c = ins.concept {
-                                        Text("Open \(c) →")
+                                        Text("\(t("Open", lang)) \(c) →")
                                             .font(.sans(12.5, weight: .medium))
-                                            .foregroundColor(Brand.orange)
+                                            .foregroundColor(accent)
                                             .padding(.top, 6)
                                     }
                                 }
@@ -261,10 +263,10 @@ struct KnowledgeView: View {
     }
 
     private struct Insight: Identifiable {
-        let id = UUID()
         let tag: String
         let text: String
         let concept: String?
+        var id: String { "\(tag):\(concept ?? "")" }
     }
 
     private func generateInsights() -> [Insight] {
@@ -547,14 +549,17 @@ private struct Timeline: View {
     }
 
     private struct TLDot: Identifiable {
-        let id = UUID()
         let concept: String
         let ts: Date
         let count: Int
+        // Stable, deterministic id — concept + integer timestamp. Survives
+        // re-renders so SwiftUI can diff dots and skip redraws.
+        var id: String { "\(concept)@\(Int(ts.timeIntervalSince1970))" }
     }
 }
 
 private struct ConceptDrawer: View {
+    @Environment(\.appLanguage) private var lang: AppLanguage
     @Environment(AppStore.self) private var store
     let concept: Concept
     let episodes: [Episode]
@@ -603,7 +608,7 @@ private struct ConceptDrawer: View {
 
             HStack(spacing: 24) {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("Mentioned").font(.mono(10)).foregroundColor(Ink.tertiary)
+                    Text(t("Mentioned", lang)).font(.mono(10)).foregroundColor(Ink.tertiary)
                     HStack(spacing: 0) {
                         Text("\(concept.count)")
                             .font(.serif(22, weight: .medium))
@@ -613,7 +618,7 @@ private struct ConceptDrawer: View {
                     }
                 }
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("Across").font(.mono(10)).foregroundColor(Ink.tertiary)
+                    Text(t("Across", lang)).font(.mono(10)).foregroundColor(Ink.tertiary)
                     HStack(spacing: 4) {
                         Text("\(mentioned.count)")
                             .font(.serif(22, weight: .medium))
@@ -630,7 +635,8 @@ private struct ConceptDrawer: View {
                 alignment: .bottom
             )
 
-            EyebrowText(text: "From the transcripts").padding(.top, 14).padding(.bottom, 10)
+            EyebrowText(text: t("From the transcripts", lang).uppercased())
+                .padding(.top, 14).padding(.bottom, 10)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
@@ -659,7 +665,7 @@ private struct ConceptDrawer: View {
                                 Button {
                                     store.view = .episode(ep.id)
                                 } label: {
-                                    Text("Open episode →")
+                                    Text(t("Open episode →", lang))
                                 }
                                 .buttonStyle(TextButtonStyle())
                             }

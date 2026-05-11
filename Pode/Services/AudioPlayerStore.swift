@@ -74,7 +74,25 @@ final class AudioPlayerStore {
         isPlaying ? pause() : play()
     }
 
+    /// Default seek — uses a small tolerance (250ms each side) so AVPlayer
+    /// doesn't burn cycles on precise frame-accurate seeks. Good for
+    /// click-to-seek, transcript line jumps, +/- 15s skips.
     func seek(to seconds: Double) {
+        seek(to: seconds, tolerance: CMTime(seconds: 0.25, preferredTimescale: 600))
+    }
+
+    /// Variant for high-frequency seeks (live scrubbing). Larger tolerance =
+    /// faster decoder catch-up, less stutter while the user drags.
+    func seek(to seconds: Double, tolerance: CMTime) {
+        guard let player else { return }
+        let target = max(0, seconds)
+        player.seek(to: CMTime(seconds: target, preferredTimescale: 600),
+                    toleranceBefore: tolerance, toleranceAfter: tolerance)
+        currentTime = target
+    }
+
+    /// Final commit — frame-accurate landing point after a drag ends.
+    func commitSeek(to seconds: Double) {
         guard let player else { return }
         let target = max(0, seconds)
         player.seek(to: CMTime(seconds: target, preferredTimescale: 600),

@@ -60,6 +60,10 @@ private struct TrafficLightPositioner: NSViewRepresentable {
 struct ContentView: View {
     @Environment(AppStore.self) private var store
 
+    private var currentLanguage: AppLanguage {
+        AppLanguage(rawValue: store.settings.appLanguage) ?? .auto
+    }
+
     var body: some View {
         ZStack(alignment: .bottom) {
             // Bloom is extracted so it only re-renders when its three settings
@@ -113,6 +117,14 @@ struct ContentView: View {
             .frame(maxWidth: .infinity)
         }
         .ignoresSafeArea(.all, edges: .top)
+        // Wire the user-chosen accent into every descendant so the picker
+        // actually changes the UI, not just the bloom.
+        .environment(\.brandAccent, Color(hex: store.settings.accentHex))
+        // App language → SwiftUI locale (drives date/number formatters and
+        // any built-in localizable Text) + custom `appLanguage` env value
+        // for our manual L10n table.
+        .environment(\.locale, currentLanguage.resolvedLocale)
+        .environment(\.appLanguage, currentLanguage)
         .background(
             // Title-bar coords use NSView default isFlipped = false, so y is
             // measured from the bottom of the title-bar view (height ≈ 28).
@@ -134,6 +146,7 @@ struct ContentView: View {
         case .settings: SettingsView()
         case .show(let id): ShowDetailView(showId: id)
         case .episode(let id): EpisodeView(episodeId: id)
+        case .search(let q): SearchView(query: q)
         }
     }
 
@@ -149,6 +162,10 @@ struct ContentView: View {
         case .settings: return "settings"
         case .show(let id): return "show-\(id)"
         case .episode(let id): return "episode-\(id)"
+        // Same id regardless of query so typing in the search field updates
+        // the view contents in place rather than fading the whole page on
+        // every keystroke.
+        case .search: return "search"
         }
     }
 }

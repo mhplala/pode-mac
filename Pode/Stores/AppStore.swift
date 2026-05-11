@@ -11,6 +11,8 @@ enum AppView: Hashable {
     case settings
     case show(String)
     case episode(String)
+    /// Global search results page — driven by the sidebar search field.
+    case search(String)
 }
 
 struct ToastItem: Identifiable {
@@ -25,6 +27,16 @@ final class AppStore {
     var settings: AppSettings = AppSettings()
     var toasts: [ToastItem] = []
     var refreshing: Bool = false
+
+    /// Last view BEFORE we routed the user to Browse for an iTunes search.
+    /// Set only when the sidebar search field navigates them away; never
+    /// touched if the user was already on Browse or if they navigate via
+    /// other means while a search is active.
+    private var preSearchView: AppView = .listenNow
+    /// True iff the *current* `.browse` view was entered via the global
+    /// search field. Lets us pop back when the user clears the field
+    /// without yanking the user out of Browse if they came in directly.
+    private var enteredBrowseForSearch: Bool = false
 
     let player: AudioPlayerStore
 
@@ -53,6 +65,91 @@ final class AppStore {
     func attach(_ ctx: ModelContext) {
         self.modelContext = ctx
         loadSettings()
+        startAutoRefresh()
+    }
+
+    /// Background timer that keeps subscribed shows current without
+    /// requiring the user to hit Refresh. Fires once shortly after
+    /// launch (~5s — long enough that the UI has settled and SwiftData
+    /// is ready, short enough that "I just opened the app" matches the
+    /// "fetch new episodes" expectation) and then every 30 minutes
+    /// while the app is alive.
+    private var autoRefreshTask: Task<Void, Never>?
+
+    private func startAutoRefresh() {
+        // Single-instance guard — `attach` could theoretically run more
+        // than once during hot reload / preview environments.
+        autoRefreshTask?.cancel()
+        autoRefreshTask = Task { @MainActor [weak self] in
+            // Initial delay: don't block app-launch CPU on RSS network IO.
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            while !Task.isCancelled {
+                await self?.refreshAllSubscribed(silent: true)
+                // 30 minute interval. Most podcast feeds update at most
+                // daily; checking twice an hour is plenty without being
+                // wasteful on the user's bandwidth.
+                try? await Task.sleep(nanoseconds: 30 * 60 * 1_000_000_000)
+            }
+        }
+    }
+
+    /// Fetch every subscribed show from SwiftData and refresh them.
+    /// `silent: true` suppresses the post-refresh toast — used by the
+    /// auto-refresh timer (we don't want a popup every 30 min). The
+    /// per-show "N new episodes queued" toast still fires from inside
+    /// `refreshShow` if new episodes land.
+    func refreshAllSubscribed(silent: Bool = false) async {
+        guard let ctx = modelContext else { return }
+        let shows = (try? ctx.fetch(FetchDescriptor<Show>())) ?? []
+        guard !shows.isEmpty else { return }
+        refreshing = true
+        for s in shows { await refreshShow(s) }
+        refreshing = false
+        if !silent {
+            toast("Refreshed \(shows.count) \(shows.count == 1 ? "show" : "shows")")
+        }
+    }
+
+    // MARK: - Search / navigation
+
+    /// Update the global search query and route the user straight to the
+    /// Browse page running an iTunes search — same UX as Apple Podcasts.
+    /// We don't show an interstitial "search results" page; the sidebar
+    /// search box IS the iTunes-podcast search bar.
+    ///
+    /// Empty query → if we navigated *to* Browse for this search, pop back.
+    /// Non-empty query → switch to `.browse` (if not already), then push the
+    /// query through `.runiTunesSearch` so BrowseView fires the API call.
+    func updateSearch(_ q: String) {
+        search = q
+        let trimmed = q.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if trimmed.isEmpty {
+            if case .browse = view, enteredBrowseForSearch {
+                view = preSearchView
+                enteredBrowseForSearch = false
+            }
+            return
+        }
+
+        // Need to be on Browse to run the search.
+        if case .browse = view {
+            // already there — just deliver the query
+        } else {
+            preSearchView = view
+            enteredBrowseForSearch = true
+            view = .browse
+        }
+
+        // Defer to the next runloop tick so BrowseView has a chance to mount
+        // its `.onReceive(...)` subscription before we post.
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: .runiTunesSearch,
+                object: nil,
+                userInfo: ["q": trimmed]
+            )
+        }
     }
 
     // MARK: - Toast
@@ -90,6 +187,14 @@ final class AppStore {
             case .inferSpeakers: if let v = r.boolValue { s.inferSpeakers = v }
             case .transcribeLanguage: if let v = r.stringValue { s.transcribeLanguage = v }
             case .simplifiedChinese: if let v = r.boolValue { s.simplifiedChinese = v }
+            case .summaryProvider: if let v = r.stringValue { s.summaryProvider = v }
+            case .geminiKey: s.geminiKey = r.stringValue
+            case .customKey: s.customKey = r.stringValue
+            case .customBaseURL: if let v = r.stringValue { s.customBaseURL = v }
+            case .openaiSummaryModel: if let v = r.stringValue { s.openaiSummaryModel = v }
+            case .geminiModel: if let v = r.stringValue { s.geminiModel = v }
+            case .customModel: if let v = r.stringValue { s.customModel = v }
+            case .appLanguage: if let v = r.stringValue { s.appLanguage = v }
             case .none: break
             }
         }
@@ -115,6 +220,14 @@ final class AppStore {
             (.inferSpeakers, nil, nil, s.inferSpeakers),
             (.transcribeLanguage, s.transcribeLanguage, nil, nil),
             (.simplifiedChinese, nil, nil, s.simplifiedChinese),
+            (.summaryProvider, s.summaryProvider, nil, nil),
+            (.geminiKey, s.geminiKey, nil, nil),
+            (.customKey, s.customKey, nil, nil),
+            (.customBaseURL, s.customBaseURL, nil, nil),
+            (.openaiSummaryModel, s.openaiSummaryModel, nil, nil),
+            (.geminiModel, s.geminiModel, nil, nil),
+            (.customModel, s.customModel, nil, nil),
+            (.appLanguage, s.appLanguage, nil, nil),
         ]
         for (key, str, dbl, bln) in pairs {
             let keyString = key.rawValue
@@ -204,7 +317,14 @@ final class AppStore {
                 show.artworkUrl = parsed.show.artworkUrl.isEmpty ? show.artworkUrl : parsed.show.artworkUrl
                 show.showDescription = parsed.show.description ?? show.showDescription
 
+                // Snapshot whether this show already had episodes BEFORE we
+                // start inserting. If empty, this is the first sync (the
+                // user just subscribed) and we want to skip auto-queue —
+                // otherwise the entire 50-item backlog would land in the
+                // queue, which is never what the user wants.
                 let existingByID = Dictionary(uniqueKeysWithValues: show.episodes.map { ($0.id, $0) })
+                let isFirstSync = existingByID.isEmpty
+                var newEpisodes: [Episode] = []
                 for raw in parsed.episodes.prefix(50) {
                     let epId = IDFactory.episodeId(showId: show.id, guid: raw.guid)
                     if let existing = existingByID[epId] {
@@ -221,9 +341,22 @@ final class AppStore {
                         )
                         ep.show = show
                         ctx.insert(ep)
+                        newEpisodes.append(ep)
                     }
                 }
                 try? ctx.save()
+
+                // For genuine refreshes (not the initial subscribe), every
+                // newly-arrived episode goes to "play next" automatically.
+                // Iterating ascending by pubDate puts the newest nearest
+                // the queue head (it's the last call → wins position[1]).
+                if !isFirstSync, !newEpisodes.isEmpty {
+                    let ordered = newEpisodes.sorted { $0.pubDate < $1.pubDate }
+                    for ep in ordered {
+                        playNext(episode: ep, reason: "auto", silent: true)
+                    }
+                    toast("\(newEpisodes.count) new \(newEpisodes.count == 1 ? "episode" : "episodes") queued")
+                }
             }
         } catch {
             await MainActor.run { self.toast("Refresh failed: \(error.localizedDescription)") }
@@ -241,6 +374,9 @@ final class AppStore {
 
     // MARK: - Playback
 
+    /// Start playing an episode. Per the queue model, the episode is moved
+    /// (or inserted) at the head of the queue first — so the queue head is
+    /// always the currently-playing item.
     func startPlaying(_ episode: Episode) {
         let source: URL
         if episode.downloaded, let path = episode.localFilePath, FileManager.default.fileExists(atPath: path) {
@@ -251,6 +387,10 @@ final class AppStore {
             toast("Bad audio URL")
             return
         }
+        moveToQueueHead(episodeID: episode.id)
+        // Stamp last-played so the Show page knows which episode to resume.
+        episode.lastPlayedAt = .now
+        try? modelContext?.save()
         if player.currentEpisodeID == episode.id {
             player.play()
             return
@@ -299,6 +439,145 @@ final class AppStore {
         ep.played = 1
         ep.position = ep.duration
         try? ctx.save()
+        // Auto-advance: the just-finished item is the queue head; pop it
+        // and start the next item if there is one.
+        advanceQueue(finishedEpisodeID: episodeID)
+    }
+
+    // MARK: - Queue
+
+    /// Sorted queue items (smallest position first). Head = currently
+    /// playing. Use this from views to render the queue.
+    func loadQueue() -> [QueueItem] {
+        guard let ctx = modelContext else { return [] }
+        let descriptor = FetchDescriptor<QueueItem>(
+            sortBy: [SortDescriptor(\QueueItem.position, order: .forward)]
+        )
+        return (try? ctx.fetch(descriptor)) ?? []
+    }
+
+    /// Append an episode at the tail of the queue. No-op if it's already in
+    /// the queue. `silent` skips the user-visible toast — the auto-queue
+    /// path uses it because it issues one summary toast per refresh.
+    @discardableResult
+    func enqueue(episode: Episode, reason: String = "manual", silent: Bool = false) -> Bool {
+        guard let ctx = modelContext else { return false }
+        if existingQueueItem(for: episode.id, in: ctx) != nil {
+            if !silent { toast("Already in queue") }
+            return false
+        }
+        let items = loadQueue()
+        let nextPos = (items.last?.position ?? 0) + 1000
+        let item = QueueItem(id: episode.id, position: nextPos, addedReason: reason)
+        item.episode = episode
+        ctx.insert(item)
+        try? ctx.save()
+        if !silent { toast("Added to queue") }
+        return true
+    }
+
+    /// Insert an episode right *after* the currently-playing item (i.e. at
+    /// position 1 of the upcoming list). Used by "Play next" affordance
+    /// and by per-show autoQueue=top on refresh.
+    func playNext(episode: Episode, reason: String = "manual", silent: Bool = false) {
+        guard let ctx = modelContext else { return }
+        let items = loadQueue()
+        // Remove any existing entry first so it can move.
+        if let existing = existingQueueItem(for: episode.id, in: ctx) {
+            ctx.delete(existing)
+        }
+        // Place between head (position[0]) and the next item.
+        let head = items.first(where: { $0.id != episode.id })?.position
+        let second = items.dropFirst().first(where: { $0.id != episode.id })?.position
+        let pos: Int
+        switch (head, second) {
+        case (let h?, let s?): pos = (h + s) / 2 == h ? h + 1 : (h + s) / 2
+        case (let h?, nil):    pos = h + 1000
+        case (nil, _):         pos = 0
+        }
+        let item = QueueItem(id: episode.id, position: pos, addedReason: reason)
+        item.episode = episode
+        ctx.insert(item)
+        try? ctx.save()
+        if !silent { toast("Playing next") }
+    }
+
+    /// Move an episode to the head of the queue (the currently-playing
+    /// slot). Used internally by `startPlaying`.
+    func moveToQueueHead(episodeID: String) {
+        guard let ctx = modelContext else { return }
+        let items = loadQueue()
+        let headPos = items.first?.position ?? 0
+        // Remove any existing entry, regardless of position.
+        if let existing = existingQueueItem(for: episodeID, in: ctx) {
+            // If already at head, no-op.
+            if existing.position == headPos { return }
+            ctx.delete(existing)
+        }
+        // Fetch the episode reference to wire the relationship.
+        let epDescriptor = FetchDescriptor<Episode>(predicate: #Predicate<Episode> { $0.id == episodeID })
+        let ep = try? ctx.fetch(epDescriptor).first
+        let item = QueueItem(id: episodeID, position: headPos - 1000, addedReason: "manual")
+        item.episode = ep
+        ctx.insert(item)
+        try? ctx.save()
+    }
+
+    /// Remove an episode from the queue.
+    func removeFromQueue(episodeID: String) {
+        guard let ctx = modelContext else { return }
+        if let item = existingQueueItem(for: episodeID, in: ctx) {
+            ctx.delete(item)
+            try? ctx.save()
+        }
+    }
+
+    /// Move an item from one queue index to another (drag-to-reorder).
+    /// `from` is an `IndexSet` to match SwiftUI's `.onMove(perform:)` API.
+    func reorderQueue(from source: IndexSet, to destination: Int) {
+        guard let ctx = modelContext else { return }
+        var items = loadQueue()
+        items.move(fromOffsets: source, toOffset: destination)
+        // Renumber with a 1000-wide gap so future inserts have room.
+        for (i, item) in items.enumerated() {
+            item.position = i * 1000
+        }
+        try? ctx.save()
+    }
+
+    /// Clear the entire queue. Doesn't touch the currently-playing player.
+    func clearQueue() {
+        guard let ctx = modelContext else { return }
+        for item in loadQueue() {
+            ctx.delete(item)
+        }
+        try? ctx.save()
+    }
+
+    /// Pop the head (just-finished episode) and start the next one. Called
+    /// from `markFinished` on `onFinished`.
+    private func advanceQueue(finishedEpisodeID: String) {
+        guard let ctx = modelContext else { return }
+        // Remove the just-finished head item.
+        if let head = existingQueueItem(for: finishedEpisodeID, in: ctx) {
+            ctx.delete(head)
+            try? ctx.save()
+        }
+        // Pick the new head (smallest position) and play it.
+        let items = loadQueue()
+        guard let next = items.first, let ep = next.episode else {
+            // Queue is empty — stop.
+            player.teardown()
+            return
+        }
+        startPlaying(ep)
+    }
+
+    private func existingQueueItem(for id: String, in ctx: ModelContext) -> QueueItem? {
+        let descriptor = FetchDescriptor<QueueItem>(
+            predicate: #Predicate<QueueItem> { $0.id == id }
+        )
+        return try? ctx.fetch(descriptor).first
     }
 
     // MARK: - Highlights

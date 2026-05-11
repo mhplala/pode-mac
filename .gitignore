@@ -30,3 +30,7 @@ Package.resolved
 # Logs / scratch
 *.log
 *.tmp
+
+# AppIcon source — handed to scripts/build-dmg.sh on demand,
+# the generated AppIcon set is what lives in the repo.
+icon-source.png

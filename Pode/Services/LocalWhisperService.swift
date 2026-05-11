@@ -107,6 +107,16 @@ actor LocalWhisperService {
         return dir
     }
 
+    /// CoreML graph directories WhisperKit needs at runtime. A model
+    /// folder missing any of these is an incomplete download and must
+    /// be re-fetched — WhisperKit will otherwise blow up partway through
+    /// pipeline init looking for the missing piece.
+    private static let requiredCoreMLBundles = [
+        "AudioEncoder.mlmodelc",
+        "TextDecoder.mlmodelc",
+        "MelSpectrogram.mlmodelc"
+    ]
+
     /// Returns the on-disk folder for the variant if it's already downloaded.
     /// WhisperKit lays out models under `<cache>/<repo>/<variant>/`.
     static func cachedModelFolder(_ model: LocalWhisperModel) -> URL? {
@@ -116,15 +126,26 @@ actor LocalWhisperService {
             return nil
         }
         for case let url as URL in enumerator {
-            if url.lastPathComponent == model.rawValue {
-                // Sanity check: must contain at least one mlmodelc / model file.
-                if let kids = try? FileManager.default.contentsOfDirectory(atPath: url.path),
-                   kids.contains(where: { $0.hasSuffix(".mlmodelc") || $0.hasSuffix(".bin") || $0.hasSuffix(".json") }) {
-                    return url
-                }
+            if url.lastPathComponent == model.rawValue,
+               isFolderComplete(url) {
+                return url
             }
         }
         return nil
+    }
+
+    /// True iff every required CoreML model bundle exists under `folder`.
+    /// Used both for cache lookup and for the post-download integrity check.
+    private static func isFolderComplete(_ folder: URL) -> Bool {
+        var isDir: ObjCBool = false
+        for name in requiredCoreMLBundles {
+            let path = folder.appendingPathComponent(name).path
+            guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir),
+                  isDir.boolValue else {
+                return false
+            }
+        }
+        return true
     }
 
     /// Whether the chosen model has already been downloaded.
@@ -147,6 +168,12 @@ actor LocalWhisperService {
 
     /// Downloads the model if needed, then loads the pipeline.
     /// `onStage` fires on the **main actor** so the UI can update directly.
+    ///
+    /// Self-heals incomplete caches: if pipeline init fails because the
+    /// on-disk folder is missing required `.mlmodelc` bundles (interrupted
+    /// download, killed mid-write, etc.), it wipes the folder and tries
+    /// once more from scratch instead of leaving the user permanently
+    /// stuck behind a broken cache.
     func prepare(
         model: LocalWhisperModel,
         onStage: @MainActor @Sendable @escaping (LocalWhisperStage) -> Void
@@ -157,43 +184,81 @@ actor LocalWhisperService {
         try Self.checkDiskSpace(for: model)
 
         let modelsDir = try Self.modelsDirectory()
-        var modelFolder: URL? = Self.cachedModelFolder(model)
+        var triedRedownload = false
 
-        if modelFolder == nil {
-            await onStage(.downloadingModel(progress: 0))
+        while true {
+            // Fetch (or re-fetch) the model folder.
+            let modelFolder: URL = try await ensureDownloaded(
+                model: model, modelsDir: modelsDir, onStage: onStage
+            )
+
+            await onStage(.loadingModel)
             do {
-                modelFolder = try await WhisperKit.download(
-                    variant: model.rawValue,
+                // WhisperKit needs the *folder path* to load model files.
+                // `download: false` tells it not to re-download — we
+                // already have the bits.
+                let config = WhisperKitConfig(
+                    model: model.rawValue,
                     downloadBase: modelsDir,
-                    progressCallback: { progress in
-                        let f = progress.fractionCompleted
-                        Task { @MainActor in onStage(.downloadingModel(progress: f)) }
-                    }
+                    modelFolder: modelFolder.path,
+                    verbose: false,
+                    logLevel: .error,
+                    load: true,
+                    download: false
                 )
+                self.pipeline = try await WhisperKit(config)
+                self.loadedModel = model
+                return
             } catch {
-                throw LocalWhisperError.modelDownloadFailed(error.localizedDescription)
+                // Treat a load failure as cache corruption — but only
+                // give it one self-heal attempt to avoid an infinite
+                // download/fail loop on genuinely broken environments.
+                if triedRedownload {
+                    throw LocalWhisperError.transcribeFailed(
+                        "Pipeline init: \(error.localizedDescription)"
+                    )
+                }
+                triedRedownload = true
+                // Wipe the partial cache so `ensureDownloaded` re-fetches.
+                try? FileManager.default.removeItem(at: modelFolder)
             }
         }
+    }
 
-        await onStage(.loadingModel)
-        do {
-            // WhisperKit needs the *folder path* to load model files. Without
-            // `modelFolder`, init throws "folder not set". `download: false`
-            // tells it not to re-download — we already have the bits.
-            let config = WhisperKitConfig(
-                model: model.rawValue,
-                downloadBase: modelsDir,
-                modelFolder: modelFolder?.path,
-                verbose: false,
-                logLevel: .error,
-                load: true,
-                download: false
-            )
-            self.pipeline = try await WhisperKit(config)
-            self.loadedModel = model
-        } catch {
-            throw LocalWhisperError.transcribeFailed("Pipeline init: \(error.localizedDescription)")
+    /// Guarantee the model folder exists on disk and contains all required
+    /// CoreML bundles. Downloads (or re-downloads) on miss; verifies the
+    /// integrity of the result so the caller can trust the path.
+    private func ensureDownloaded(
+        model: LocalWhisperModel,
+        modelsDir: URL,
+        onStage: @MainActor @Sendable @escaping (LocalWhisperStage) -> Void
+    ) async throws -> URL {
+        if let cached = Self.cachedModelFolder(model) {
+            return cached
         }
+        await onStage(.downloadingModel(progress: 0))
+        let folder: URL
+        do {
+            folder = try await WhisperKit.download(
+                variant: model.rawValue,
+                downloadBase: modelsDir,
+                progressCallback: { progress in
+                    let f = progress.fractionCompleted
+                    Task { @MainActor in onStage(.downloadingModel(progress: f)) }
+                }
+            )
+        } catch {
+            throw LocalWhisperError.modelDownloadFailed(error.localizedDescription)
+        }
+        // Defend against the download "succeeding" but actually missing
+        // a required bundle (network flakiness, partial writes).
+        guard Self.isFolderComplete(folder) else {
+            try? FileManager.default.removeItem(at: folder)
+            throw LocalWhisperError.modelDownloadFailed(
+                "Download finished but is missing required model files. Try again."
+            )
+        }
+        return folder
     }
 
     /// Runs the audio file through the pipeline.
@@ -216,6 +281,12 @@ actor LocalWhisperService {
         guard let pipe = pipeline else {
             throw LocalWhisperError.transcribeFailed("Pipeline not loaded")
         }
+
+        // Bridge the silent gap between "model loaded" and the first real
+        // `.transcribing` callback from WhisperKit (audio decode + VAD
+        // chunking can run for many seconds with no events). Without this,
+        // the UI sticks on "Loading model…" and looks hung.
+        await onStage(.transcribing(progress: 0))
 
         // Progress tracking. With VAD chunking + parallel workers, segments
         // arrive out of order with chunk-local start/end timestamps. We use

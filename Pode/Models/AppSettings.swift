@@ -16,7 +16,7 @@ struct AppSettings: Codable, Equatable {
     var localWhisperModel: String = "openai_whisper-medium"
     /// Have we completed the first-run model picker for the local engine?
     var localWhisperPicked: Bool = false
-    /// Use Claude to infer speaker labels after transcribing.
+    /// Use the configured AI provider to infer speaker labels after transcribing.
     var inferSpeakers: Bool = true
     /// Whisper language hint. Empty = auto-detect (uses WhisperKit's
     /// dedicated language-detection step on the first chunk, then pins the
@@ -26,6 +26,28 @@ struct AppSettings: Codable, Equatable {
     /// Whisper's pretrained text bias produces Traditional; we convert with
     /// Apple's built-in `Hant-Hans` transform.
     var simplifiedChinese: Bool = true
+
+    // MARK: - Summary / analysis provider
+    /// "anthropic" | "openai" | "gemini" | "custom"
+    var summaryProvider: String = "anthropic"
+    /// Gemini key (separate from the OpenAI / Anthropic keys above).
+    var geminiKey: String?
+    /// Custom OpenAI-compatible endpoint key. Used with `customBaseURL`.
+    var customKey: String?
+    /// Base URL for an OpenAI-compatible service. Examples:
+    /// `https://api.deepseek.com/v1`, `https://openrouter.ai/api/v1`,
+    /// `https://api.together.xyz/v1`. Trailing slash stripped at call time.
+    var customBaseURL: String = ""
+    /// Default model name per provider. The active one is picked by `summaryProvider`.
+    var openaiSummaryModel: String = "gpt-4o-mini"
+    var geminiModel: String = "gemini-3.1-flash"
+    var customModel: String = ""
+
+    // MARK: - i18n
+    /// App display language AND the language summaries / Q&A should be
+    /// written in. Stored as `AppLanguage.rawValue`. `auto` follows the
+    /// system locale.
+    var appLanguage: String = "auto"
 }
 
 enum SettingsKey: String, CaseIterable {
@@ -44,4 +66,12 @@ enum SettingsKey: String, CaseIterable {
     case inferSpeakers
     case transcribeLanguage
     case simplifiedChinese
+    case summaryProvider
+    case geminiKey
+    case customKey
+    case customBaseURL
+    case openaiSummaryModel
+    case geminiModel
+    case customModel
+    case appLanguage
 }

@@ -49,13 +49,23 @@ enum Fmt {
     }
 
     /// Insert paragraph breaks into a wall-of-text description. If the source
-    /// already has reasonable paragraph structure (≥3 blank-line breaks) we
-    /// leave it alone; otherwise we split on sentence terminators (Chinese
-    /// 。！？ or English . ! ?) and group every ~3 sentences (or ~180 chars)
-    /// into a paragraph.
-    static func segmented(_ s: String) -> String {
+    /// First strips HTML (so `<br>`, `<p>`, entities don't show up raw
+    /// in the rendered output), then — if the result still doesn't have
+    /// any author-supplied paragraph breaks — tries to invent them by
+    /// splitting on sentence terminators (Chinese 。！？ or English . ! ?)
+    /// and grouping every ~3 sentences (or ~180 chars) into a paragraph.
+    ///
+    /// Threshold note: previously we only respected the author's
+    /// formatting when the description had ≥3 blank-line breaks. Most
+    /// podcast notes have 1–2 blank lines (a chapter section + a footer),
+    /// which fell under that threshold and got re-segmented into a worse
+    /// shape. Now we treat ANY blank-line break as a signal that the
+    /// author intended structure; we only synthesize paragraphs for
+    /// run-on single-blob descriptions.
+    static func segmented(_ raw: String) -> String {
+        let s = HTMLStripper.toPlainText(raw)
         let existingBreaks = s.components(separatedBy: "\n\n").count - 1
-        if existingBreaks >= 3 { return s }
+        if existingBreaks >= 1 { return s }
 
         let terminators: Set<Character> = ["。", "！", "？", "!", "?"]
         var sentences: [String] = []

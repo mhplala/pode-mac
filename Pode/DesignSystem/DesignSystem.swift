@@ -72,6 +72,23 @@ private enum NSFontWeight {
     }
 }
 
+// MARK: - Brand accent (driven by Settings → AppSettings.accentHex)
+
+/// Live brand accent. Bound by `ContentView` from `settings.accentHex` so the
+/// accent picker actually changes the UI. Views read via:
+///     @Environment(\.brandAccent) private var accent
+/// Falls back to the static `Brand.orange` when no environment is set.
+private struct BrandAccentKey: EnvironmentKey {
+    static let defaultValue: Color = Brand.orange
+}
+
+extension EnvironmentValues {
+    var brandAccent: Color {
+        get { self[BrandAccentKey.self] }
+        set { self[BrandAccentKey.self] = newValue }
+    }
+}
+
 // MARK: - Glass
 
 enum GlassVariant {
@@ -110,12 +127,22 @@ struct GlassBackground: View {
                 Capsule()
                     .fill(.ultraThinMaterial)
                     .overlay(Capsule().fill(tint.opacity(tintOpacity)))
-            case .deep, .tile:
+            case .deep:
                 RoundedRectangle(cornerRadius: r, style: .continuous)
                     .fill(.ultraThinMaterial)
                     .overlay(
                         RoundedRectangle(cornerRadius: r, style: .continuous)
                             .fill(tint.opacity(tintOpacity))
+                    )
+            case .tile:
+                // Repeated grid surfaces → no live material blur. A flat
+                // translucent fill over the bloom is visually almost
+                // indistinguishable but ~10× cheaper on a 4×N Browse grid.
+                RoundedRectangle(cornerRadius: r, style: .continuous)
+                    .fill(Color.white.opacity(0.42))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: r, style: .continuous)
+                            .fill(tint.opacity(tintOpacity * 0.5))
                     )
             }
         }
@@ -124,8 +151,13 @@ struct GlassBackground: View {
             shape
                 .stroke(Color.white.opacity(0.55), lineWidth: 1)
         )
-        // Single soft warm shadow (was three).
-        .shadow(color: Color(hex: "#3c2814").opacity(0.10), radius: 16, x: 0, y: 8)
+        // Single soft warm shadow. Skip on tiles (24 shadows in a grid is
+        // a measurable hit) — the cover art's own shadow gives them depth.
+        .shadow(
+            color: Color(hex: "#3c2814").opacity(variant == .tile ? 0 : 0.10),
+            radius: variant == .tile ? 0 : 16,
+            x: 0, y: variant == .tile ? 0 : 8
+        )
     }
 
     private var shape: AnyShape {
@@ -239,31 +271,33 @@ private struct GlassScrollMetricsKey: PreferenceKey {
 struct CoverView: View {
     let artworkUrl: String?
     let title: String
+    /// Hard size cap when `fill = false` (default). Also used as a hint for
+    /// the gradient-fallback glyph font when `fill = false`.
     var size: CGFloat = 56
     var radius: CGFloat = 12
     var playing: Bool = false
+    /// When true, ignore `size` for framing and let the cover fill its
+    /// container as a 1:1 square. Use in grid cells where the parent already
+    /// constrains width and you want the artwork to span the cell.
+    var fill: Bool = false
 
     var body: some View {
         let (c1, c2) = Fmt.colorsFor(title)
         ZStack {
-            // The transaction makes the AsyncImage phase change animated, so
-            // the gradient fallback cross-fades into the loaded image instead
-            // of popping. The fallback is *always* drawn underneath so the
-            // empty / loading state has the show's color/glyph, not a blank box.
             gradientFallback(c1: c1, c2: c2)
 
             if let url = artworkUrl, !url.isEmpty, let u = URL(string: url) {
-                AsyncImage(
-                    url: u,
-                    transaction: Transaction(animation: .easeOut(duration: 0.32))
-                ) { phase in
-                    switch phase {
-                    case .success(let img):
-                        img.resizable().scaledToFill()
-                            .transition(.opacity)
-                    default:
-                        Color.clear
-                    }
+                // CachedImage hits the in-memory NSCache synchronously on
+                // init, so a cover that's already been seen renders on the
+                // first frame with zero flicker. AsyncImage didn't —
+                // it always spun up an async Task and replayed the
+                // .empty → .success transition, which is what looked like
+                // "re-loading" even though URLCache was warm.
+                CachedImage(url: u) { img in
+                    img.resizable().scaledToFill()
+                        .transition(.opacity)
+                } placeholder: {
+                    Color.clear
                 }
             }
 
@@ -274,7 +308,10 @@ struct CoverView: View {
             }
         }
         .aspectRatio(1, contentMode: .fit)
-        .frame(maxWidth: size, maxHeight: size)
+        .frame(
+            maxWidth: fill ? .infinity : size,
+            maxHeight: fill ? .infinity : size
+        )
         .compositingGroup()
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         .shadow(color: .black.opacity(0.18), radius: 6, x: 0, y: 4)
@@ -282,14 +319,35 @@ struct CoverView: View {
 
     @ViewBuilder
     private func gradientFallback(c1: Color, c2: Color) -> some View {
-        ZStack {
-            LinearGradient(colors: [c1, c2], startPoint: .topLeading, endPoint: .bottomTrailing)
-            RadialGradient(colors: [Color.white.opacity(0.3), .clear], center: .topLeading, startRadius: 0, endRadius: size * 0.7)
-            Text(Fmt.glyph(for: title))
-                .font(.serif(size * 0.5, weight: .medium))
-                .italic()
-                .foregroundColor(Color.white.opacity(0.92))
-                .shadow(color: .black.opacity(0.18), radius: 1, x: 0, y: 1)
+        // Glyph + radial sized off the actual rendered dimensions when
+        // `fill: true` so the fallback character scales with the cover.
+        // Otherwise we use the explicit `size` hint (cheaper than a
+        // GeometryReader when the size is known up front).
+        if fill {
+            GeometryReader { geo in
+                let dim = min(geo.size.width, geo.size.height)
+                ZStack {
+                    LinearGradient(colors: [c1, c2], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    RadialGradient(colors: [Color.white.opacity(0.3), .clear],
+                                   center: .topLeading,
+                                   startRadius: 0, endRadius: dim * 0.7)
+                    Text(Fmt.glyph(for: title))
+                        .font(.serif(dim * 0.5, weight: .medium))
+                        .italic()
+                        .foregroundColor(Color.white.opacity(0.92))
+                        .shadow(color: .black.opacity(0.18), radius: 1, x: 0, y: 1)
+                }
+            }
+        } else {
+            ZStack {
+                LinearGradient(colors: [c1, c2], startPoint: .topLeading, endPoint: .bottomTrailing)
+                RadialGradient(colors: [Color.white.opacity(0.3), .clear], center: .topLeading, startRadius: 0, endRadius: size * 0.7)
+                Text(Fmt.glyph(for: title))
+                    .font(.serif(size * 0.5, weight: .medium))
+                    .italic()
+                    .foregroundColor(Color.white.opacity(0.92))
+                    .shadow(color: .black.opacity(0.18), radius: 1, x: 0, y: 1)
+            }
         }
     }
 
@@ -363,12 +421,13 @@ struct GhostSmallButtonStyle: ButtonStyle {
         configuration.label
             .font(.sans(12, weight: .medium))
             .foregroundColor(Ink.secondary)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 7)
             .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(Color.black.opacity(configuration.isPressed ? 0.08 : 0.04))
             )
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
     }
 }
 
@@ -377,8 +436,9 @@ struct TextButtonStyle: ButtonStyle {
         configuration.label
             .font(.sans(12.5, weight: .medium))
             .foregroundColor(configuration.isPressed ? Brand.orange : Ink.secondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
     }
 }
 
@@ -386,12 +446,13 @@ struct PlayMiniStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .foregroundColor(.white.opacity(0.95))
-            .frame(width: 30, height: 30)
+            .frame(width: 34, height: 34)
             .background(
                 Circle()
                     .fill(configuration.isPressed ? Brand.orange : Ink.onPaper)
                     .shadow(color: .black.opacity(0.18), radius: 1, x: 0, y: 1)
             )
+            .contentShape(Circle())
             .scaleEffect(configuration.isPressed ? 0.94 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
@@ -401,15 +462,16 @@ struct IconBtnStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .foregroundColor(Ink.secondary)
-            .frame(width: 32, height: 32)
+            .frame(width: 36, height: 36)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .fill(Color.white.opacity(configuration.isPressed ? 0.85 : 0.7))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
                             .stroke(Color.black.opacity(0.08), lineWidth: 1)
                     )
             )
+            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 }
 
@@ -528,15 +590,18 @@ struct Pill<T: Hashable>: View {
             selection = value
         } label: {
             Text(label)
-                .font(.sans(12, weight: selection == value ? .semibold : .medium))
+                .font(.sans(12.5, weight: selection == value ? .semibold : .medium))
                 .foregroundColor(selection == value ? Ink.primary : Ink.secondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
                 .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
                         .fill(selection == value ? Color.white.opacity(0.95) : .clear)
                         .shadow(color: selection == value ? .black.opacity(0.06) : .clear, radius: 2, x: 0, y: 1)
                 )
+                // Make the entire pill rectangle clickable, not just the
+                // text glyphs — fixes "I clicked but nothing happened".
+                .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
         .buttonStyle(.plain)
     }

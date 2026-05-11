@@ -13,13 +13,19 @@ final class Show {
     var category: String?
     var itunesId: Int?
     var addedAt: Date
+    /// What to do when this show's RSS gains a new episode. Values are
+    /// `AutoQueueMode.rawValue`: `"off"` / `"top"` / `"bottom"`.
+    /// Stored as String (not enum) so SwiftData doesn't need to migrate
+    /// when we add a future mode.
+    var autoQueue: String = "off"
 
     @Relationship(deleteRule: .cascade, inverse: \Episode.show)
     var episodes: [Episode] = []
 
     init(id: String, title: String, host: String, feedUrl: String, artworkUrl: String,
          publisher: String? = nil, showDescription: String? = nil,
-         category: String? = nil, itunesId: Int? = nil, addedAt: Date = .now) {
+         category: String? = nil, itunesId: Int? = nil, addedAt: Date = .now,
+         autoQueue: String = "off") {
         self.id = id
         self.title = title
         self.host = host
@@ -30,7 +36,13 @@ final class Show {
         self.category = category
         self.itunesId = itunesId
         self.addedAt = addedAt
+        self.autoQueue = autoQueue
     }
+}
+
+enum AutoQueueMode: String, CaseIterable, Identifiable {
+    case off, top, bottom
+    var id: String { rawValue }
 }
 
 @Model
@@ -47,6 +59,10 @@ final class Episode {
 
     var played: Double = 0   // 0..1
     var position: Double = 0 // seconds
+    /// Last time the user pressed Play on this episode. Used by the Show
+    /// page's "Resume" button to pick which episode to continue. Optional
+    /// so existing rows from before this field migrate cleanly to nil.
+    var lastPlayedAt: Date?
 
     var downloaded: Bool = false
     var downloadedAt: Date?
@@ -151,5 +167,30 @@ final class AppSettingsRecord {
         self.stringValue = stringValue
         self.doubleValue = doubleValue
         self.boolValue = boolValue
+    }
+}
+
+/// Persistent listening queue. The smallest-`position` item is the
+/// currently-playing episode (head); items behind it are "Up next" in
+/// `position` order. New inserts at head get `head.position - 1000` and at
+/// the tail get `tail.position + 1000`, so we almost never have to renumber.
+@Model
+final class QueueItem {
+    /// = `episode.id`. Lets us upsert by episode without holding a stale
+    /// reference; also enforces "an episode appears at most once in queue".
+    @Attribute(.unique) var id: String
+    var position: Int
+    var addedAt: Date
+    /// "manual" — user added (or click-to-play insert at head).
+    /// "auto"   — auto-enqueued by a Show's `autoQueue` rule on refresh.
+    var addedReason: String
+
+    var episode: Episode?
+
+    init(id: String, position: Int, addedReason: String = "manual", addedAt: Date = .now) {
+        self.id = id
+        self.position = position
+        self.addedReason = addedReason
+        self.addedAt = addedAt
     }
 }

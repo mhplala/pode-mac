@@ -51,19 +51,20 @@ enum WhisperService {
         request.setValue("Bearer \(trimmedKey)", forHTTPHeaderField: "Authorization")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
-        let audioData = try Data(contentsOf: audioFileURL)
-        let filename = audioFileURL.lastPathComponent
+        // Stream the multipart body to a temp file instead of building it
+        // in memory. Otherwise we'd hold (audio bytes) + (full multipart
+        // body bytes) simultaneously — for a 90-minute episode that's ~140 MB
+        // each, easily 300 MB resident, plus the system's network buffer
+        // copy. Streaming from disk keeps memory at a few KB.
+        let tempBodyURL = try buildMultipartBodyFile(
+            boundary: boundary,
+            model: model,
+            language: language,
+            audioFileURL: audioFileURL
+        )
+        defer { try? FileManager.default.removeItem(at: tempBodyURL) }
 
-        var body = Data()
-        body.append(makePart(boundary: boundary, name: "model", value: model))
-        body.append(makePart(boundary: boundary, name: "response_format", value: "verbose_json"))
-        body.append(makePart(boundary: boundary, name: "timestamp_granularities[]", value: "segment"))
-        if let language { body.append(makePart(boundary: boundary, name: "language", value: language)) }
-        body.append(makeFilePart(boundary: boundary, name: "file", filename: filename,
-                                 contentType: "application/octet-stream", data: audioData))
-        body.append(Data("--\(boundary)--\r\n".utf8))
-
-        let (data, response) = try await URLSession.shared.upload(for: request, from: body)
+        let (data, response) = try await URLSession.shared.upload(for: request, fromFile: tempBodyURL)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             let bodyText = String(data: data, encoding: .utf8) ?? ""
             throw WhisperError.http(http.statusCode, bodyText)
@@ -85,6 +86,51 @@ enum WhisperService {
         return WhisperResult(lines: lines, language: decoded.language, text: decoded.text)
     }
 
+    /// Streams parts directly to a temp file. The audio file is copied chunk
+    /// by chunk via `FileHandle`, never held whole in memory.
+    private static func buildMultipartBodyFile(
+        boundary: String,
+        model: String,
+        language: String?,
+        audioFileURL: URL
+    ) throws -> URL {
+        let tmpDir = FileManager.default.temporaryDirectory
+        let bodyURL = tmpDir.appendingPathComponent("whisper-\(UUID().uuidString).body")
+        FileManager.default.createFile(atPath: bodyURL.path, contents: nil)
+        let out = try FileHandle(forWritingTo: bodyURL)
+        defer { try? out.close() }
+
+        out.write(makePart(boundary: boundary, name: "model", value: model))
+        out.write(makePart(boundary: boundary, name: "response_format", value: "verbose_json"))
+        out.write(makePart(boundary: boundary, name: "timestamp_granularities[]", value: "segment"))
+        if let language {
+            out.write(makePart(boundary: boundary, name: "language", value: language))
+        }
+
+        // File-part header (no body bytes yet)
+        let filename = audioFileURL.lastPathComponent
+        var fileHeader = Data()
+        fileHeader.append(Data("--\(boundary)\r\n".utf8))
+        fileHeader.append(Data("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".utf8))
+        fileHeader.append(Data("Content-Type: application/octet-stream\r\n\r\n".utf8))
+        out.write(fileHeader)
+
+        // Pipe audio file into the body in 1 MB chunks
+        let input = try FileHandle(forReadingFrom: audioFileURL)
+        defer { try? input.close() }
+        let chunkSize = 1 * 1024 * 1024
+        while true {
+            let chunk = input.readData(ofLength: chunkSize)
+            if chunk.isEmpty { break }
+            out.write(chunk)
+        }
+
+        // Trailing CRLF + closing boundary
+        out.write(Data("\r\n".utf8))
+        out.write(Data("--\(boundary)--\r\n".utf8))
+        return bodyURL
+    }
+
     private static func makePart(boundary: String, name: String, value: String) -> Data {
         var part = Data()
         part.append(Data("--\(boundary)\r\n".utf8))
@@ -94,16 +140,6 @@ enum WhisperService {
         return part
     }
 
-    private static func makeFilePart(boundary: String, name: String, filename: String,
-                                     contentType: String, data: Data) -> Data {
-        var part = Data()
-        part.append(Data("--\(boundary)\r\n".utf8))
-        part.append(Data("Content-Disposition: form-data; name=\"\(name)\"; filename=\"\(filename)\"\r\n".utf8))
-        part.append(Data("Content-Type: \(contentType)\r\n\r\n".utf8))
-        part.append(data)
-        part.append(Data("\r\n".utf8))
-        return part
-    }
 }
 
 /// URLSessionDownloadTask with real per-chunk progress + Task cancellation.

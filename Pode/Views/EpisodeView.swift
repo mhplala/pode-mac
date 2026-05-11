@@ -2,33 +2,33 @@ import SwiftUI
 import SwiftData
 
 struct EpisodeView: View {
+    @Environment(\.brandAccent) private var accent: Color
+    @Environment(\.appLanguage) private var lang: AppLanguage
     @Environment(AppStore.self) private var store
+    @Environment(DownloadStore.self) private var downloads
+    @Environment(TranscribeStore.self) private var transcribes
     @Environment(\.modelContext) private var modelContext
 
     let episodeId: String
     @Query private var episodes: [Episode]
 
-    enum EpTab: String, CaseIterable, Hashable { case transcript, description, highlights }
+    enum EpTab: String, CaseIterable, Hashable { case description, transcript, highlights }
     enum AITab: String, CaseIterable, Hashable { case summary, takeaways, ask }
 
-    @State private var tab: EpTab = .transcript
+    @State private var tab: EpTab = .description
     @State private var aiTab: AITab = .summary
 
-    @State private var downloading: Bool = false
-    @State private var downloadProgress: Double = 0  // 0..1
-    @State private var downloadTotal: Int64 = 0
-    @State private var downloadLoaded: Int64 = 0
-    @State private var downloadStartedAt: Date? = nil
-    @State private var downloadTask: Task<Void, Never>? = nil
-    @State private var downloadError: String? = nil
+    /// View-only convenience reads. Source of truth lives in the stores —
+    /// these survive page navigation; previously they were `@State` and
+    /// dropped on every view tear-down.
+    private var downloadJob: DownloadJob? { downloads.job(for: episodeId) }
+    private var transcribeJob: TranscribeJob? { transcribes.job(for: episodeId) }
+    private var downloading: Bool { (downloadJob?.task) != nil }
+    private var transcribing: Bool { (transcribeJob?.task) != nil }
 
-    @State private var transcribing: Bool = false
-    @State private var transcribeStage: String = ""
-    @State private var transcribeError: String? = nil
     @State private var analyzing: Bool = false
     @State private var pickingModel: Bool = false
     @State private var pickerSelection: LocalWhisperModel = .balanced
-    @State private var transcribeTaskId: UUID? = nil
 
     @State private var askValue: String = ""
     @State private var askLoading: Bool = false
@@ -44,39 +44,83 @@ struct EpisodeView: View {
         _episodes = Query(filter: #Predicate<Episode> { $0.id == episodeId })
     }
 
+    /// Live height of the tab content area. Updated from a GeometryReader
+    /// that wraps the body — lets each tab content view (description /
+    /// transcript / highlights) size itself to "the rest of the page",
+    /// rather than the previous hard-coded 560pt that left a strip of
+    /// empty space on tall windows.
+    @State private var tabContentHeight: CGFloat = 560
+
     var body: some View {
+        GeometryReader { geo in
+            // Subtract the rough size of the page chrome that lives ABOVE
+            // the tabs card (back button, header card with cover/buttons,
+            // breathing room) plus just enough room for the floating
+            // dock at the bottom — previously the bottom margin was way
+            // over-estimated, which left a strip of empty space below
+            // the tab card on tall windows.
+            let chromeAbove: CGFloat = 300
+            let chromeBelow: CGFloat = 110
+            let height = max(420, geo.size.height - chromeAbove - chromeBelow)
+            content
+                .onAppear { tabContentHeight = height }
+                .onChange(of: geo.size.height) { _, _ in
+                    tabContentHeight = height
+                }
+                // Back button stays pinned at the page's top-left
+                // regardless of scroll position — sits above the
+                // GlassScroll so it never disappears as the user
+                // scrolls long descriptions / transcripts.
+                .overlay(alignment: .topLeading) {
+                    Button {
+                        store.view = .listenNow
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "chevron.left").font(.system(size: 11))
+                            Text(L10n.t("Back", language: lang))
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(Ink.secondary)
+                    .font(.sans(12.5, weight: .medium))
+                    // Liquid-glass chip so the button stays legible
+                    // when scrolled-through cover art passes under it.
+                    .glass(.chip)
+                    .padding(.leading, 32)
+                    .padding(.top, 12)
+                }
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         GlassScroll {
             VStack(alignment: .leading, spacing: 0) {
-                Button {
-                    store.view = .listenNow
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "chevron.left").font(.system(size: 11))
-                        Text("Back")
-                    }
-                }
-                .buttonStyle(TextButtonStyle())
+                // Back button is rendered as a fixed-position overlay
+                // below — leaving an empty top spacer here so the rest
+                // of the page content doesn't slide under it.
+                Color.clear.frame(height: 32)
 
                 if let ep = episodes.first, let show = ep.show {
-                    ViewThatFits(in: .horizontal) {
+                    // Always 2-column. Window has a minimum width that
+                    // guarantees this layout fits, so we don't flip to a
+                    // stacked variant — switching tabs won't shuffle the
+                    // overall page structure.
+                    VStack(spacing: 16) {
+                        headerCard(ep: ep, show: show)
                         HStack(alignment: .top, spacing: 20) {
-                            VStack(spacing: 16) {
-                                headerCard(ep: ep, show: show)
-                                tabsCard(ep: ep, show: show)
-                            }
+                            tabsCard(ep: ep, show: show)
+                                .frame(maxWidth: .infinity)
                             aiInspector(ep: ep, show: show)
                                 .frame(width: 380)
-                        }
-                        VStack(spacing: 16) {
-                            headerCard(ep: ep, show: show)
-                            aiInspector(ep: ep, show: show)
-                            tabsCard(ep: ep, show: show)
                         }
                     }
                     .padding(.top, 8)
                     .padding(.bottom, 140)
                 } else {
-                    Text("Episode not found.")
+                    Text(t("Episode not found.", lang))
                         .font(.serif(16))
                         .italic()
                         .foregroundColor(Ink.tertiary)
@@ -88,15 +132,15 @@ struct EpisodeView: View {
             .padding(.horizontal, 32)
             .padding(.top, 8)
         }
-        .alert("Delete transcript?", isPresented: $confirmDeleteTranscript) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) { deleteTranscript() }
+        .alert(t("Delete transcript?", lang), isPresented: $confirmDeleteTranscript) {
+            Button(t("Cancel", lang), role: .cancel) {}
+            Button(t("Delete", lang), role: .destructive) { deleteTranscript() }
         } message: {
-            Text("AI summaries will be cleared too.")
+            Text(t("AI summaries will be cleared too.", lang))
         }
-        .alert("Remove downloaded audio?", isPresented: $confirmRemoveDownload) {
-            Button("Cancel", role: .cancel) {}
-            Button("Remove", role: .destructive) { removeDownload() }
+        .alert(t("Remove downloaded audio?", lang), isPresented: $confirmRemoveDownload) {
+            Button(t("Cancel", lang), role: .cancel) {}
+            Button(t("Remove", lang), role: .destructive) { removeDownload() }
         }
     }
 
@@ -120,7 +164,9 @@ struct EpisodeView: View {
                     } label: {
                         HStack(spacing: 8) {
                             Image(systemName: isPlaying(ep) ? "pause.fill" : "play.fill")
-                            Text(isPlaying(ep) ? "Pause" : (ep.played > 0 ? "Resume" : "Play"))
+                            Text(isPlaying(ep)
+                                 ? L10n.t("Pause", language: lang)
+                                 : L10n.t(ep.played > 0 ? "Resume" : "Play", language: lang))
                                 .lineLimit(1)
                         }
                         .frame(minWidth: 78)
@@ -132,15 +178,6 @@ struct EpisodeView: View {
                     transcribeButton(ep: ep)
 
                     Spacer()
-
-                    Button {
-                        saveHighlight(ep: ep)
-                    } label: {
-                        Image(systemName: "bookmark")
-                    }
-                    .buttonStyle(IconBtnStyle())
-                    .help("Save highlight at current position")
-                    .disabled(ep.transcriptLines.isEmpty)
                 }
                 .padding(.bottom, 16)
 
@@ -149,57 +186,11 @@ struct EpisodeView: View {
                         .padding(.bottom, 12)
                 }
 
-                if downloading || ep.downloaded {
-                    progressBar(ep: ep)
-                }
-
-                if let downloadError {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundColor(Danger.primary)
-                            .font(.system(size: 11))
-                            .padding(.top, 2)
-                        Text(downloadError)
-                            .font(.sans(12))
-                            .foregroundColor(Danger.primary)
-                            .lineSpacing(2)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        Button {
-                            startDownload(ep: ep)
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "arrow.clockwise").font(.system(size: 10))
-                                Text("Retry")
-                            }
-                        }
-                        .buttonStyle(GhostSmallButtonStyle())
-                    }
-                    .padding(.top, 8)
-                }
-
-                if let transcribeError {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundColor(Danger.primary)
-                            .font(.system(size: 11))
-                            .padding(.top, 2)
-                        Text(transcribeError)
-                            .font(.sans(12))
-                            .foregroundColor(Danger.primary)
-                            .lineSpacing(2)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        Button {
-                            startTranscribe(ep: ep)
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "arrow.clockwise").font(.system(size: 10))
-                                Text("Retry")
-                            }
-                        }
-                        .buttonStyle(GhostSmallButtonStyle())
-                    }
-                    .padding(.top, 8)
-                }
+                // Single, stage-aware progress strip. The transcribe
+                // pipeline takes priority — its `fetchingAudio` stage already
+                // mirrors the underlying download progress, so we don't show
+                // two bars when transcribe owns the download.
+                unifiedStatus(ep: ep)
             }
         }
         .padding(24)
@@ -210,67 +201,64 @@ struct EpisodeView: View {
     private func downloadButton(ep: Episode) -> some View {
         Button {
             if downloading {
-                downloadTask?.cancel()
-                downloading = false
+                downloads.cancel(episodeID: ep.id)
                 return
             }
             if ep.downloaded {
                 confirmRemoveDownload = true
                 return
             }
-            startDownload(ep: ep)
+            downloads.startDownload(episode: ep, ctx: modelContext)
         } label: {
             HStack(spacing: 6) {
                 if ep.downloaded {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(Success.primary)
-                    Text("Downloaded").lineLimit(1)
-                } else if downloading {
-                    Text(downloadProgress > 0 ? "Cancel · \(Int(downloadProgress * 100))%" : "Cancel").lineLimit(1)
+                    Text(L10n.t("Downloaded", language: lang)).lineLimit(1)
+                } else if let job = downloadJob, job.task != nil {
+                    let pct = Int(job.progress * 100)
+                    Text(pct > 0 ? "Cancel · \(pct)%" : "Cancel").lineLimit(1)
                 } else {
                     Image(systemName: "arrow.down.circle")
-                    Text("Download").lineLimit(1)
+                    Text(L10n.t("Download", language: lang)).lineLimit(1)
                 }
             }
             .frame(minWidth: 130)
             .fixedSize(horizontal: true, vertical: false)
         }
         .buttonStyle(GhostButtonStyle())
+        // Disable manual download while the transcribe pipeline is in its
+        // fetching-audio stage — that pipeline owns the download.
+        .disabled(transcribeJob?.stage == .fetchingAudio)
     }
 
     @ViewBuilder
     private func transcribeButton(ep: Episode) -> some View {
         Button {
-            if transcribing { return }
+            if transcribing {
+                transcribes.cancel(episodeID: ep.id)
+                return
+            }
             handleTranscribeTap(ep: ep)
         } label: {
             HStack(spacing: 6) {
                 if ep.transcribed {
                     Image(systemName: "text.alignleft")
                         .foregroundColor(Success.primary)
-                    Text("Transcribed").foregroundColor(Success.primary).lineLimit(1)
-                } else if transcribing {
+                    Text(L10n.t("Transcribed", language: lang))
+                        .foregroundColor(Success.primary).lineLimit(1)
+                } else if let job = transcribeJob, job.task != nil {
                     DotPulse()
-                    Text(transcribeStageLabel).lineLimit(1)
+                    Text(t(job.stageLabelKey, lang)).lineLimit(1)
                 } else {
                     Image(systemName: "text.alignleft")
-                    Text("Transcribe").lineLimit(1)
+                    Text(L10n.t("Transcribe", language: lang)).lineLimit(1)
                 }
             }
             .frame(minWidth: 130)
             .fixedSize(horizontal: true, vertical: false)
         }
         .buttonStyle(GhostButtonStyle())
-    }
-
-    private var transcribeStageLabel: String {
-        switch transcribeStage {
-        case "fetching":     return "Fetching audio…"
-        case "downloading":  return "Downloading model…"
-        case "loading":      return "Loading model…"
-        case "speakers":     return "Tagging speakers…"
-        default:             return "Transcribing…"
-        }
     }
 
     /// First-time user with the local engine sees an inline model picker;
@@ -290,7 +278,7 @@ struct EpisodeView: View {
     private func modelPickerCard(ep: Episode) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 6) {
-                Image(systemName: "waveform").foregroundColor(Brand.orange).font(.system(size: 11))
+                Image(systemName: "waveform").foregroundColor(accent).font(.system(size: 11))
                 EyebrowText(text: "Set up transcription · one-time")
                 Spacer()
                 Button {
@@ -330,7 +318,7 @@ struct EpisodeView: View {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "arrow.down.circle").font(.system(size: 11))
-                        Text("Download & Go")
+                        Text(t("Download & Go", lang))
                     }
                 }
                 .buttonStyle(PrimaryButtonStyle())
@@ -348,7 +336,7 @@ struct EpisodeView: View {
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .foregroundColor(selected ? Brand.orange : Ink.tertiary)
+                    .foregroundColor(selected ? accent : Ink.tertiary)
                     .font(.system(size: 14))
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
@@ -356,13 +344,13 @@ struct EpisodeView: View {
                             .font(.serif(14, weight: .medium))
                             .foregroundColor(Ink.primary)
                         if m == .balanced {
-                            Text("Recommended")
+                            Text(t("Recommended", lang))
                                 .font(.mono(9.5, weight: .semibold))
-                                .foregroundColor(Brand.orange)
+                                .foregroundColor(accent)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1)
                                 .background(
-                                    Capsule().fill(Brand.orange.opacity(0.12))
+                                    Capsule().fill(accent.opacity(0.12))
                                 )
                         }
                     }
@@ -375,7 +363,7 @@ struct EpisodeView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "checkmark.circle.fill")
                             .foregroundColor(Success.primary)
-                        Text("Cached")
+                        Text(t("Cached", lang))
                     }
                     .font(.mono(10))
                     .foregroundColor(Ink.secondary)
@@ -385,10 +373,10 @@ struct EpisodeView: View {
             .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(selected ? Brand.orange.opacity(0.06) : Color.clear)
+                    .fill(selected ? accent.opacity(0.06) : Color.clear)
                     .overlay(
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(selected ? Brand.orange.opacity(0.25) : Color.black.opacity(0.05),
+                            .stroke(selected ? accent.opacity(0.25) : Color.black.opacity(0.05),
                                     lineWidth: 1)
                     )
             )
@@ -397,58 +385,144 @@ struct EpisodeView: View {
         .buttonStyle(.plain)
     }
 
+    /// One progress widget covering download AND transcribe. Renders one
+    /// of three modes:
+    /// - Transcribe pipeline active → stage-aware bar covering audio fetch
+    ///   through speaker tagging.
+    /// - Standalone download active → bytes / speed / ETA bar.
+    /// - Idle but downloaded → static "downloaded · N MB" line.
+    /// - Otherwise → nothing.
+    /// Errors from either store get surfaced inline with a Retry button.
     @ViewBuilder
-    private func progressBar(ep: Episode) -> some View {
+    private func unifiedStatus(ep: Episode) -> some View {
+        if let job = transcribeJob {
+            transcribeStatus(ep: ep, job: job)
+        } else if let job = downloadJob {
+            downloadStatus(ep: ep, job: job)
+        } else if ep.downloaded {
+            staticDownloadedRow(ep: ep)
+        }
+    }
+
+    @ViewBuilder
+    private func transcribeStatus(ep: Episode, job: TranscribeJob) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Failed jobs keep their entry around (so the view can render
+            // the error + retry) but skip the progress bar — a half-full
+            // bar next to a red error line is confusing.
+            if job.task != nil {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.black.opacity(0.07)).frame(height: 6)
+                        Capsule().fill(accent.opacity(0.85))
+                            .frame(width: max(0, geo.size.width * job.overall), height: 6)
+                            .animation(.easeOut(duration: 0.25), value: job.overall)
+                    }
+                }
+                .frame(height: 6)
+                HStack(spacing: 8) {
+                    Text(t(job.stageLabelKey, lang))
+                        .font(.mono(11))
+                        .foregroundColor(Ink.secondary)
+                    Spacer()
+                    Text("\(Int(job.overall * 100))%")
+                        .font(.mono(11))
+                        .foregroundColor(Ink.tertiary)
+                }
+            }
+            if let err = job.error {
+                errorLine(message: err) {
+                    handleTranscribeTap(ep: ep)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func downloadStatus(ep: Episode, job: DownloadJob) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             GeometryReader { geo in
-                let pct = downloading
-                    ? (downloadTotal > 0 ? Double(downloadLoaded) / Double(downloadTotal) : downloadProgress)
-                    : (ep.downloaded ? 1.0 : 0.0)
+                let pct = job.progress
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.black.opacity(0.07)).frame(height: 6)
-                    Capsule().fill(Brand.orange.opacity(0.85))
+                    Capsule().fill(accent.opacity(0.85))
                         .frame(width: max(0, geo.size.width * pct), height: 6)
+                        .animation(.easeOut(duration: 0.25), value: pct)
                 }
             }
             .frame(height: 6)
             HStack(spacing: 8) {
-                Text(progressLeftText(ep: ep))
+                Text(downloadLeftText(job: job))
                     .font(.mono(11))
                     .foregroundColor(Ink.tertiary)
                 Spacer()
-                Text(progressRightText(ep: ep))
+                Text(downloadRightText(ep: ep, job: job))
                     .font(.mono(11))
                     .foregroundColor(Ink.tertiary)
+            }
+            if let err = job.error {
+                errorLine(message: err) {
+                    downloads.startDownload(episode: ep, ctx: modelContext)
+                }
             }
         }
     }
 
-    private func progressLeftText(ep: Episode) -> String {
-        if ep.downloaded {
-            return "downloaded · \(Fmt.bytes(ep.audioSize))"
+    @ViewBuilder
+    private func staticDownloadedRow(ep: Episode) -> some View {
+        HStack(spacing: 8) {
+            Text("downloaded · \(Fmt.bytes(ep.audioSize))")
+                .font(.mono(11))
+                .foregroundColor(Ink.tertiary)
+            Spacer()
+            Text(Fmt.dur(ep.duration))
+                .font(.mono(11))
+                .foregroundColor(Ink.tertiary)
         }
-        if !downloading { return "—" }
-        // Live percent + bytes counters
-        if downloadTotal > 0 {
-            let loadedMB = Double(downloadLoaded) / 1_048_576
-            let totalMB  = Double(downloadTotal) / 1_048_576
+    }
+
+    @ViewBuilder
+    private func errorLine(message: String, retry: @escaping () -> Void) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(Danger.primary)
+                .font(.system(size: 11))
+                .padding(.top, 2)
+            Text(message)
+                .font(.sans(12))
+                .foregroundColor(Danger.primary)
+                .lineSpacing(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                retry()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.clockwise").font(.system(size: 10))
+                    Text(L10n.t("Retry", language: lang))
+                }
+            }
+            .buttonStyle(GhostSmallButtonStyle())
+        }
+        .padding(.top, 4)
+    }
+
+    private func downloadLeftText(job: DownloadJob) -> String {
+        if job.total > 0 {
+            let loadedMB = Double(job.loaded) / 1_048_576
+            let totalMB  = Double(job.total) / 1_048_576
             return String(format: "%.1f / %.1f MB · %d%%",
-                          loadedMB, totalMB, Int(downloadProgress * 100))
+                          loadedMB, totalMB, Int(job.progress * 100))
         }
-        let loadedMB = Double(downloadLoaded) / 1_048_576
+        let loadedMB = Double(job.loaded) / 1_048_576
         return String(format: "%.1f MB", loadedMB)
     }
 
-    private func progressRightText(ep: Episode) -> String {
-        guard downloading else { return Fmt.dur(ep.duration) }
-        // Speed + ETA derived from start time and bytes loaded
-        guard let start = downloadStartedAt else { return "" }
-        let elapsed = Date().timeIntervalSince(start)
-        guard elapsed > 0.5, downloadLoaded > 0 else { return "starting…" }
-        let bytesPerSecond = Double(downloadLoaded) / elapsed
-        let speedMBs = bytesPerSecond / 1_048_576
-        if downloadTotal > 0 {
-            let remaining = Double(downloadTotal - downloadLoaded) / max(bytesPerSecond, 1)
+    private func downloadRightText(ep: Episode, job: DownloadJob) -> String {
+        let bps = job.bytesPerSecond
+        guard bps > 0 else { return "starting…" }
+        let speedMBs = bps / 1_048_576
+        if job.total > 0 {
+            let remaining = Double(job.total - job.loaded) / bps
             return String(format: "%.1f MB/s · %@ left", speedMBs, etaString(remaining))
         }
         return String(format: "%.1f MB/s", speedMBs)
@@ -476,12 +550,18 @@ struct EpisodeView: View {
                         Text(label(for: t, ep: ep))
                             .font(.sans(13, weight: tab == t ? .semibold : .medium))
                             .foregroundColor(tab == t ? Ink.primary : Ink.secondary)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 7)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 9)
                             .background(
-                                RoundedRectangle(cornerRadius: 7)
+                                RoundedRectangle(cornerRadius: 8)
                                     .fill(tab == t ? Color.black.opacity(0.06) : .clear)
                             )
+                            // CRITICAL: without an explicit content shape,
+                            // hit-test on inactive tabs (clear background)
+                            // falls back to the text-glyph shape — clicks
+                            // landing in the padded space around letters
+                            // get dropped, which feels like dead zones.
+                            .contentShape(RoundedRectangle(cornerRadius: 8))
                     }
                     .buttonStyle(.plain)
                 }
@@ -520,11 +600,11 @@ struct EpisodeView: View {
         .glass(.panel)
     }
 
-    private func label(for t: EpTab, ep: Episode) -> String {
-        switch t {
-        case .transcript: return "Transcript"
-        case .description: return "Description"
-        case .highlights: return "Highlights · \(ep.highlights.count)"
+    private func label(for tab: EpTab, ep: Episode) -> String {
+        switch tab {
+        case .transcript:  return t("Transcript", lang)
+        case .description: return t("Description", lang)
+        case .highlights:  return "\(t("Highlights", lang)) · \(ep.highlights.count)"
         }
     }
 
@@ -534,7 +614,7 @@ struct EpisodeView: View {
             LazyVStack(alignment: .leading, spacing: 0) {
                 if ep.transcriptLines.isEmpty && !transcribing {
                     VStack(spacing: 18) {
-                        Text("No transcript yet. Generate one to enable AI summaries, search, and concept extraction.")
+                        Text(t("No transcript yet. Generate one to enable AI summaries, search, and concept extraction.", lang))
                             .font(.serif(16))
                             .italic()
                             .foregroundColor(Ink.tertiary)
@@ -545,7 +625,7 @@ struct EpisodeView: View {
                         } label: {
                             HStack(spacing: 8) {
                                 Image(systemName: "text.alignleft")
-                                Text("Transcribe this episode")
+                                Text(t("Transcribe this episode", lang))
                             }
                         }
                         .buttonStyle(PrimaryButtonStyle())
@@ -553,13 +633,15 @@ struct EpisodeView: View {
                     .frame(maxWidth: .infinity)
                     .padding(36)
                 }
-                if transcribing {
+                if let job = transcribeJob, job.task != nil {
                     HStack(spacing: 10) {
                         DotPulse()
-                        Text(transcribeStage == "fetching" ? "FETCHING AUDIO" : "STREAMING · \(store.settings.whisperModel)")
+                        Text(job.stage == .fetchingAudio
+                             ? "FETCHING AUDIO"
+                             : "STREAMING · \(store.settings.whisperModel)")
                             .font(.mono(11, weight: .semibold))
                             .tracking(0.7)
-                            .foregroundColor(Brand.orange)
+                            .foregroundColor(accent)
                         Spacer()
                     }
                     .padding(.horizontal, 4)
@@ -578,50 +660,28 @@ struct EpisodeView: View {
                 let sorted = ep.sortedTranscriptLines
                 let activeIdx = activeIndex(in: sorted, ep: ep)
                 ForEach(Array(sorted.enumerated()), id: \.element.lineIndex) { i, line in
-                    Button {
-                        if store.player.currentEpisodeID != ep.id {
-                            store.startPlaying(ep)
-                        }
-                        store.player.seek(to: line.t)
-                    } label: {
-                        HStack(alignment: .top, spacing: 18) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(Fmt.time(line.t))
-                                    .font(.mono(10.5))
-                                    .foregroundColor(Ink.tertiary)
-                                if let speaker = line.speaker {
-                                    Text(speaker)
-                                        .font(.sans(11.5, weight: .semibold))
-                                        .foregroundColor(Ink.primary)
-                                }
+                    TranscriptRow(
+                        time: line.t,
+                        speaker: line.speaker,
+                        text: line.text,
+                        isActive: i == activeIdx,
+                        onTap: {
+                            if store.player.currentEpisodeID != ep.id {
+                                store.startPlaying(ep)
                             }
-                            .frame(width: 110, alignment: .leading)
-                            .padding(.leading, 8)
-                            .overlay(
-                                Rectangle().fill(i == activeIdx ? Brand.orange : .clear).frame(width: 2),
-                                alignment: .leading
-                            )
-                            Text(line.text)
-                                .font(.serif(16))
-                                .foregroundColor(i == activeIdx ? Ink.primary : Ink.secondary)
-                                .lineSpacing(3)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.trailing, 8)
+                            store.player.commitSeek(to: line.t)
+                        },
+                        onSaveHighlight: {
+                            store.saveHighlight(episode: ep, at: line.t, quote: line.text)
                         }
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(i == activeIdx ? Brand.orange.opacity(0.06) : .clear)
-                        )
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
+                    )
+                    .equatable()
                 }
             }
             .padding(.horizontal, 24)
             .padding(.vertical, ep.transcriptLines.isEmpty ? 0 : 24)
         }
-        .frame(height: 560)
+        .frame(height: tabContentHeight)
     }
 
     @ViewBuilder
@@ -629,13 +689,20 @@ struct EpisodeView: View {
         ScrollView {
             VStack(alignment: .leading) {
                 if let desc = ep.episodeDescription, !desc.isEmpty {
-                    Text(Fmt.segmented(desc))
+                    // AttributedString routes through NSDataDetector so
+                    // bare URLs in the description (no markdown brackets
+                    // needed) become real clickable links. `.textSelection
+                    // (.enabled)` makes the body selectable + copyable
+                    // with the standard ⌘C shortcut.
+                    Text(linkifiedDescription(desc))
                         .font(.serif(16))
                         .foregroundColor(Ink.secondary)
                         .lineSpacing(4)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .tint(accent)
                 } else {
-                    Text("No description in the feed.")
+                    Text(t("No description in the feed.", lang))
                         .font(.serif(16))
                         .italic()
                         .foregroundColor(Ink.tertiary)
@@ -646,7 +713,25 @@ struct EpisodeView: View {
             }
             .padding(24)
         }
-        .frame(height: 560)
+        .frame(height: tabContentHeight)
+    }
+
+    /// Build an `AttributedString` from a podcast description: paragraph-
+    /// segmented (existing logic), then run through `NSDataDetector` to
+    /// promote bare URLs (`https://…`, `www.…`) to live `.link`
+    /// attributes. SwiftUI's `Text(AttributedString)` handles the click
+    /// → open behaviour for free.
+    private func linkifiedDescription(_ raw: String) -> AttributedString {
+        let segmented = Fmt.segmented(raw)
+        let mut = NSMutableAttributedString(string: segmented)
+        if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
+            let range = NSRange(location: 0, length: mut.length)
+            detector.enumerateMatches(in: segmented, options: [], range: range) { match, _, _ in
+                guard let match, let url = match.url else { return }
+                mut.addAttribute(.link, value: url, range: match.range)
+            }
+        }
+        return AttributedString(mut)
     }
 
     @ViewBuilder
@@ -654,7 +739,7 @@ struct EpisodeView: View {
         ScrollView {
             VStack(spacing: 12) {
                 if ep.highlights.isEmpty {
-                    Text("No highlights yet. Press the bookmark button while listening to save the line at the current position.")
+                    Text(t("No highlights yet. Right-click any transcript line to save it as a highlight.", lang))
                         .font(.serif(15))
                         .italic()
                         .foregroundColor(Ink.tertiary)
@@ -666,7 +751,7 @@ struct EpisodeView: View {
                     HStack(alignment: .top, spacing: 12) {
                         Image(systemName: "bookmark.fill")
                             .font(.system(size: 13))
-                            .foregroundColor(Brand.orange)
+                            .foregroundColor(accent)
                             .padding(.top, 4)
                         VStack(alignment: .leading, spacing: 8) {
                             Text("\"\(h.quote)\"")
@@ -696,16 +781,16 @@ struct EpisodeView: View {
                     .padding(.vertical, 14)
                     .background(
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(Brand.orange.opacity(0.04))
+                            .fill(accent.opacity(0.04))
                             .overlay(
-                                RoundedRectangle(cornerRadius: 12).stroke(Brand.orange.opacity(0.12), lineWidth: 1)
+                                RoundedRectangle(cornerRadius: 12).stroke(accent.opacity(0.12), lineWidth: 1)
                             )
                     )
                 }
             }
             .padding(24)
         }
-        .frame(height: 560)
+        .frame(height: tabContentHeight)
     }
 
     private func activeIndex(in sorted: [TranscriptLineModel], ep: Episode) -> Int {
@@ -721,7 +806,7 @@ struct EpisodeView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: "sparkles")
-                    .foregroundColor(Brand.orange)
+                    .foregroundColor(accent)
                 EyebrowText(text: "Steve · listening")
                 Spacer()
                 Text(modelShortName())
@@ -731,13 +816,17 @@ struct EpisodeView: View {
             .padding(.bottom, 14)
 
             PillBar(
-                items: [(AITab.summary, "Summary"), (AITab.takeaways, "Takeaways"), (AITab.ask, "Ask")],
+                items: [
+                    (AITab.summary,   t("Summary", lang)),
+                    (AITab.takeaways, t("Takeaways", lang)),
+                    (AITab.ask,       t("Ask", lang)),
+                ],
                 selection: $aiTab
             )
             .padding(.bottom, 16)
 
             if !ep.transcribed {
-                Text("Transcribe first to enable AI.")
+                Text(t("Transcribe first to enable AI.", lang))
                     .font(.serif(14))
                     .italic()
                     .foregroundColor(Ink.tertiary)
@@ -755,19 +844,37 @@ struct EpisodeView: View {
         .glass(.panel)
     }
 
+    /// AI provider config for the *summary* operations. Resolves provider,
+    /// key, model, and base URL from `AppSettings.summaryProvider`.
+    private var summaryConfig: AIClientConfig {
+        AIClientConfig(settings: store.settings)
+    }
+
+    /// True when the active summary provider has both a key and a model set.
+    /// Replaces the old `anthropicKey != nil` gating throughout the AI panes.
+    private var summaryConfigured: Bool {
+        !summaryConfig.apiKey.isEmpty && !summaryConfig.model.isEmpty
+    }
+
     private func modelShortName() -> String {
-        let m = store.settings.claudeModel
-        if m.contains("haiku") { return "haiku" }
+        let m = summaryConfig.model
+        if m.contains("haiku")  { return "haiku" }
         if m.contains("sonnet") { return "sonnet" }
-        if m.contains("opus") { return "opus" }
-        return m
+        if m.contains("opus")   { return "opus" }
+        if m.contains("flash")  { return "flash" }
+        if m.contains("pro")    { return "pro" }
+        if m.contains("mini")   { return "mini" }
+        // Final fallback: trim provider/version noise. e.g.
+        // "gpt-4o-mini" → "gpt-4o", "deepseek-chat" → "deepseek"
+        let parts = m.split(separator: "-")
+        return parts.prefix(2).joined(separator: "-")
     }
 
     @ViewBuilder
     private func summaryPane(ep: Episode, show: Show) -> some View {
         if analyzing && (ep.aiSummary?.isEmpty ?? true) {
             HStack(spacing: 6) {
-                Text("Analyzing").italic()
+                Text(t("Analyzing", lang)).italic()
                 Text("…")
             }
             .font(.serif(14))
@@ -805,18 +912,18 @@ struct EpisodeView: View {
                     }
                 }
                 .buttonStyle(TextButtonStyle())
-                .disabled(analyzing || store.settings.anthropicKey?.isEmpty != false)
+                .disabled(analyzing || !summaryConfigured)
             }
         } else {
             VStack(alignment: .leading, spacing: 12) {
-                Text(store.settings.anthropicKey?.isEmpty == false
+                Text(summaryConfigured
                      ? "Run analysis to extract a summary, takeaways, and concepts."
-                     : "Add your Anthropic API key in Settings to enable AI.")
+                     : "Add your \(summaryConfig.provider.displayName) key in Settings to enable AI.")
                     .font(.serif(14))
                     .italic()
                     .foregroundColor(Ink.tertiary)
                 Button {
-                    if store.settings.anthropicKey?.isEmpty != false {
+                    if !summaryConfigured {
                         store.view = .settings
                     } else {
                         runAnalysis(ep: ep, show: show)
@@ -824,7 +931,7 @@ struct EpisodeView: View {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "sparkles").font(.system(size: 11))
-                        Text("Analyze with Claude")
+                        Text("\(t("Analyze with", lang)) \(summaryConfig.provider.displayName)")
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -837,7 +944,7 @@ struct EpisodeView: View {
     private func takeawaysPane(ep: Episode, show: Show) -> some View {
         if analyzing && (ep.aiTakeaways?.isEmpty ?? true) {
             HStack(spacing: 4) {
-                Text("Thinking").italic()
+                Text(t("Thinking", lang)).italic()
                 Text("…")
             }
             .font(.serif(14))
@@ -848,7 +955,7 @@ struct EpisodeView: View {
                     HStack(alignment: .top, spacing: 12) {
                         Text(String(format: "%02d", i + 1))
                             .font(.mono(10.5, weight: .semibold))
-                            .foregroundColor(Brand.orange)
+                            .foregroundColor(accent)
                             .frame(width: 18)
                             .padding(.top, 4)
                         Text(t)
@@ -868,14 +975,14 @@ struct EpisodeView: View {
             }
         } else {
             VStack(alignment: .leading, spacing: 12) {
-                Text(store.settings.anthropicKey?.isEmpty == false
+                Text(summaryConfigured
                      ? "Run analysis to surface key takeaways."
-                     : "Add your Anthropic API key in Settings to enable AI.")
+                     : "Add your \(summaryConfig.provider.displayName) key in Settings to enable AI.")
                     .font(.serif(14))
                     .italic()
                     .foregroundColor(Ink.tertiary)
                 Button {
-                    if store.settings.anthropicKey?.isEmpty != false {
+                    if !summaryConfigured {
                         store.view = .settings
                     } else {
                         runAnalysis(ep: ep, show: show)
@@ -883,7 +990,7 @@ struct EpisodeView: View {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "sparkles").font(.system(size: 11))
-                        Text("Analyze with Claude")
+                        Text("\(t("Analyze with", lang)) \(summaryConfig.provider.displayName)")
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -896,7 +1003,7 @@ struct EpisodeView: View {
     private func askPane(ep: Episode) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 6) {
-                Image(systemName: "sparkles").foregroundColor(Brand.orange).font(.system(size: 11))
+                Image(systemName: "sparkles").foregroundColor(accent).font(.system(size: 11))
                 TextField(askPlaceholder(ep: ep), text: $askValue)
                     .textFieldStyle(.plain)
                     .font(.sans(13.5))
@@ -941,7 +1048,7 @@ struct EpisodeView: View {
 
             if askLoading {
                 HStack(spacing: 4) {
-                    Text("Thinking").italic()
+                    Text(t("Thinking", lang)).italic()
                     Text("…")
                 }
                 .font(.serif(14))
@@ -973,7 +1080,7 @@ struct EpisodeView: View {
                                     .font(.mono(10.5))
                                     .padding(.horizontal, 7)
                                     .padding(.vertical, 3)
-                                    .background(Capsule().fill(Brand.orange.opacity(0.1)))
+                                    .background(Capsule().fill(accent.opacity(0.1)))
                                     .foregroundColor(Brand.orange700)
                                 }
                                 .buttonStyle(.plain)
@@ -996,8 +1103,8 @@ struct EpisodeView: View {
     }
 
     private func askPlaceholder(ep: Episode) -> String {
-        if store.settings.anthropicKey?.isEmpty != false {
-            return "Add your Anthropic API key in Settings"
+        if !summaryConfigured {
+            return "Add your \(summaryConfig.provider.displayName) key in Settings"
         }
         if ep.transcriptLines.isEmpty {
             return "Transcribe first"
@@ -1006,7 +1113,7 @@ struct EpisodeView: View {
     }
 
     private func canAsk(ep: Episode) -> Bool {
-        store.settings.anthropicKey?.isEmpty == false && !ep.transcriptLines.isEmpty
+        summaryConfigured && !ep.transcriptLines.isEmpty
     }
 
     // MARK: - Actions
@@ -1015,313 +1122,41 @@ struct EpisodeView: View {
         store.player.currentEpisodeID == ep.id && store.player.isPlaying
     }
 
-    private func startDownload(ep: Episode) {
-        guard let url = URL(string: ep.audioUrl) else {
-            downloadError = "Bad audio URL"
-            return
-        }
-        downloadError = nil
-        downloading = true
-        downloadProgress = 0
-        downloadTotal = 0
-        downloadLoaded = 0
-        downloadStartedAt = .now
-        downloadTask = Task { @MainActor in
-            do {
-                let dest = try await AudioDownloader.download(from: url) { loaded, total in
-                    Task { @MainActor in
-                        downloadLoaded = loaded
-                        downloadTotal = total
-                        if total > 0 { downloadProgress = Double(loaded) / Double(total) }
-                    }
-                }
-                let attrs = try? FileManager.default.attributesOfItem(atPath: dest.path)
-                ep.localFilePath = dest.path
-                ep.downloaded = true
-                ep.downloadedAt = .now
-                if let size = attrs?[.size] as? NSNumber {
-                    ep.audioSize = size.int64Value
-                }
-                try? modelContext.save()
-                store.toast("Downloaded · \(Fmt.bytes(ep.audioSize))")
-            } catch {
-                if (error as? CancellationError) != nil || (error as NSError).code == NSURLErrorCancelled {
-                    store.toast("Download cancelled")
-                } else {
-                    downloadError = humanizeDownloadError(error)
-                }
-            }
-            downloading = false
-            downloadProgress = 0
-            downloadStartedAt = nil
-        }
-    }
-
-    private func humanizeDownloadError(_ error: Error) -> String {
-        let nsError = error as NSError
-        switch nsError.code {
-        case NSURLErrorTimedOut:
-            return "Network timed out. Try again."
-        case NSURLErrorNotConnectedToInternet:
-            return "No internet connection."
-        case NSURLErrorNetworkConnectionLost:
-            return "Connection lost mid-download. Tap retry."
-        case NSURLErrorCannotFindHost, NSURLErrorCannotConnectToHost:
-            return "Couldn't reach the host. The feed may be down."
-        case NSURLErrorBadServerResponse:
-            return "The server returned a bad response."
-        case NSURLErrorDataNotAllowed:
-            return "Downloads are blocked on this network."
-        default:
-            return error.localizedDescription
-        }
-    }
-
+    /// Thin wrapper. Real download lives in `DownloadStore` so progress
+    /// survives the user navigating away from this page.
     private func removeDownload() {
         guard let ep = episodes.first else { return }
-        if let path = ep.localFilePath {
-            try? FileManager.default.removeItem(atPath: path)
-        }
-        ep.localFilePath = nil
-        ep.downloaded = false
-        ep.downloadedAt = nil
-        try? modelContext.save()
+        downloads.removeDownload(episode: ep, ctx: modelContext)
         store.toast("Download removed")
     }
 
+    /// Thin wrapper. Real pipeline lives in `TranscribeStore` (which
+    /// internally drives `DownloadStore` for the audio fetch stage).
     private func startTranscribe(ep: Episode) {
-        if store.settings.transcribeEngine == "local" {
-            startLocalTranscribe(ep: ep)
-        } else {
-            startCloudTranscribe(ep: ep)
+        // Cloud requires an OpenAI key — bounce to settings if missing.
+        if store.settings.transcribeEngine != "local" {
+            if (store.settings.openaiKey ?? "").isEmpty {
+                store.toast("Add your OpenAI API key in Settings to transcribe")
+                store.view = .settings
+                return
+            }
         }
-    }
-
-    // MARK: - Cloud (OpenAI Whisper)
-
-    private func startCloudTranscribe(ep: Episode) {
-        guard let key = store.settings.openaiKey, !key.isEmpty else {
-            store.toast("Add your OpenAI API key in Settings to transcribe")
-            store.view = .settings
-            return
-        }
-        transcribeError = nil
-        transcribing = true
-        transcribeStage = ""
-        Task { @MainActor in
-            do {
-                let audioFileURL: URL = try await ensureAudioDownloaded(ep: ep)
-
-                transcribeStage = ""
-                let result = try await WhisperService.transcribe(
-                    audioFileURL: audioFileURL,
-                    apiKey: key,
-                    model: store.settings.whisperModel
-                )
-                // Replace transcript lines
-                for old in ep.transcriptLines { modelContext.delete(old) }
-                for (idx, line) in result.lines.enumerated() {
-                    let text = store.settings.simplifiedChinese
-                        ? Fmt.toSimplifiedChinese(line.text)
-                        : line.text
-                    let m = TranscriptLineModel(t: line.t, text: text, speaker: line.speaker, lineIndex: idx)
-                    m.episode = ep
-                    modelContext.insert(m)
-                }
-                ep.transcribed = true
-                ep.transcribedAt = .now
-                try? modelContext.save()
-                store.toast("Transcribed · \(result.lines.count) segments")
-
-                // Auto-run AI analysis if Anthropic key set
-                if let aKey = store.settings.anthropicKey, !aKey.isEmpty, let show = ep.show {
+        transcribes.startTranscribe(
+            episode: ep,
+            settings: store.settings,
+            ctx: modelContext,
+            onAnalyze: { [self] ep in
+                if summaryConfigured, let show = ep.show {
                     runAnalysis(ep: ep, show: show)
                 }
-            } catch {
-                if (error as? CancellationError) != nil {
-                    store.toast("Transcription cancelled")
-                } else {
-                    transcribeError = "Transcribe failed: \(error.localizedDescription)"
-                }
-            }
-            transcribing = false
-            transcribeStage = ""
-        }
-    }
-
-    // MARK: - Local (WhisperKit)
-
-    private func startLocalTranscribe(ep: Episode) {
-        transcribeError = nil
-        transcribing = true
-        transcribeStage = "fetching"
-        let modelChoice = LocalWhisperModel(rawValue: store.settings.localWhisperModel) ?? .balanced
-
-        // Create a TaskCenter item so the sidebar pill shows progress.
-        let task = TaskItem(
-            kind: .transcribeLocal,
-            title: ep.title.prefix(40).description,
-            subtitle: "Preparing…",
-            progress: 0,
-            status: .running,
-            onCancel: nil
+            },
+            toast: { msg in store.toast(msg) }
         )
-        let taskId = TaskCenter.shared.add(task)
-        transcribeTaskId = taskId
-
-        let runTask = Task { @MainActor in
-            do {
-                let audioFileURL = try await ensureAudioDownloaded(ep: ep)
-
-                // Wipe any partial / previous transcript before streaming new lines in.
-                for old in ep.transcriptLines { modelContext.delete(old) }
-                ep.transcribed = false
-                try? modelContext.save()
-
-                let dur = max(ep.duration, 1)
-                let lang = store.settings.transcribeLanguage.isEmpty
-                    ? nil
-                    : store.settings.transcribeLanguage
-                let result = try await LocalWhisperService.shared.transcribe(
-                    audioFileURL: audioFileURL,
-                    model: modelChoice,
-                    language: lang,
-                    audioDuration: dur,
-                    onStage: { stage in
-                        switch stage {
-                        case .checking:
-                            transcribeStage = "fetching"
-                            TaskCenter.shared.setSubtitle(taskId, "Checking model…")
-                        case .downloadingModel(let p):
-                            transcribeStage = "downloading"
-                            TaskCenter.shared.setProgress(
-                                taskId, p,
-                                subtitle: "Downloading model · \(Int(p * 100))%"
-                            )
-                        case .loadingModel:
-                            transcribeStage = "loading"
-                            TaskCenter.shared.setSubtitle(taskId, "Loading model…")
-                        case .transcribing(let p):
-                            transcribeStage = ""
-                            TaskCenter.shared.setProgress(
-                                taskId, p,
-                                subtitle: "Transcribing · \(Int(p * 100))%"
-                            )
-                        }
-                    }
-                )
-
-                // Insert from the final result only — these timestamps are
-                // properly absolute (post `updateSeekOffsetsForResults`),
-                // unlike the chunk-local ones streamed mid-flight.
-                var lineBuffer: [(idx: Int, text: String)] = []
-                for (idx, line) in result.lines.enumerated() {
-                    let text = store.settings.simplifiedChinese
-                        ? Fmt.toSimplifiedChinese(line.text)
-                        : line.text
-                    let m = TranscriptLineModel(
-                        t: line.t, text: text,
-                        speaker: nil, lineIndex: idx
-                    )
-                    m.episode = ep
-                    modelContext.insert(m)
-                    lineBuffer.append((idx, text))
-                }
-                ep.transcribed = true
-                ep.transcribedAt = .now
-                try? modelContext.save()
-
-                // Optional: speaker inference via Claude.
-                if store.settings.inferSpeakers,
-                   let aKey = store.settings.anthropicKey, !aKey.isEmpty,
-                   let show = ep.show, !lineBuffer.isEmpty {
-                    transcribeStage = "speakers"
-                    TaskCenter.shared.setSubtitle(taskId, "Tagging speakers…")
-                    let pairs = lineBuffer.map { (index: $0.idx, text: $0.text) }
-                    do {
-                        let assignments = try await ClaudeService.inferSpeakers(
-                            lines: pairs,
-                            showTitle: show.title,
-                            showHost: show.host,
-                            episodeTitle: ep.title,
-                            apiKey: aKey,
-                            model: store.settings.claudeModel
-                        )
-                        // Apply to SwiftData lines
-                        for line in ep.transcriptLines {
-                            if let s = assignments[line.lineIndex] {
-                                line.speaker = s
-                            }
-                        }
-                        try? modelContext.save()
-                        let count = Set(assignments.values).count
-                        TaskCenter.shared.succeed(
-                            taskId,
-                            subtitle: "Done · \(lineBuffer.count) lines · \(count) speakers"
-                        )
-                        store.toast("Transcribed · \(lineBuffer.count) lines · \(count) speakers")
-                    } catch {
-                        // Speaker inference is best-effort — transcript is fine.
-                        TaskCenter.shared.succeed(
-                            taskId,
-                            subtitle: "Done · \(lineBuffer.count) lines (speakers skipped)"
-                        )
-                        store.toast("Transcribed · \(lineBuffer.count) lines")
-                    }
-                } else {
-                    TaskCenter.shared.succeed(
-                        taskId,
-                        subtitle: "Done · \(lineBuffer.count) lines"
-                    )
-                    store.toast("Transcribed · \(lineBuffer.count) lines")
-                }
-
-                // Auto-run AI analysis (summary / takeaways) if key set.
-                if let aKey = store.settings.anthropicKey, !aKey.isEmpty, let show = ep.show {
-                    runAnalysis(ep: ep, show: show)
-                }
-            } catch let LocalWhisperError.cancelled {
-                store.toast("Transcription cancelled")
-                TaskCenter.shared.cancel(taskId)
-            } catch {
-                transcribeError = "Transcribe failed: \(error.localizedDescription)"
-                TaskCenter.shared.fail(taskId, error.localizedDescription)
-            }
-            transcribing = false
-            transcribeStage = ""
-            transcribeTaskId = nil
-        }
-
-        // Wire cancel callback to actually cancel the Task.
-        TaskCenter.shared.update(taskId) { item in
-            item.onCancel = { runTask.cancel() }
-        }
-    }
-
-    /// Shared helper — downloads the audio file if it's not already on disk.
-    private func ensureAudioDownloaded(ep: Episode) async throws -> URL {
-        if ep.downloaded, let path = ep.localFilePath, FileManager.default.fileExists(atPath: path) {
-            return URL(fileURLWithPath: path)
-        }
-        transcribeStage = "fetching"
-        guard let url = URL(string: ep.audioUrl) else {
-            throw WhisperError.audioFetch("bad URL")
-        }
-        let dest = try await AudioDownloader.download(from: url)
-        let attrs = try? FileManager.default.attributesOfItem(atPath: dest.path)
-        ep.localFilePath = dest.path
-        ep.downloaded = true
-        ep.downloadedAt = .now
-        if let size = attrs?[.size] as? NSNumber {
-            ep.audioSize = size.int64Value
-        }
-        try? modelContext.save()
-        return dest
     }
 
     private func runAnalysis(ep: Episode, show: Show) {
-        guard let key = store.settings.anthropicKey, !key.isEmpty else {
-            store.toast("Add your Anthropic API key in Settings")
+        guard summaryConfigured else {
+            store.toast("Add your \(summaryConfig.provider.displayName) key in Settings")
             store.view = .settings
             return
         }
@@ -1329,16 +1164,16 @@ struct EpisodeView: View {
             store.toast("Transcribe first")
             return
         }
+        let cfg = summaryConfig
         analyzing = true
         Task { @MainActor in
             do {
                 let texts = ep.sortedTranscriptLines.map { $0.text }
-                let r = try await ClaudeService.analyze(
+                let r = try await AIService.analyze(
                     transcript: texts,
                     episodeTitle: ep.title,
                     showTitle: show.title,
-                    apiKey: key,
-                    model: store.settings.claudeModel
+                    config: cfg
                 )
                 ep.aiSummary = r.summary
                 ep.aiTakeaways = r.takeaways
@@ -1355,7 +1190,8 @@ struct EpisodeView: View {
 
     private func runAsk(ep: Episode) {
         let q = askValue.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty, canAsk(ep: ep), let key = store.settings.anthropicKey else { return }
+        guard !q.isEmpty, canAsk(ep: ep) else { return }
+        let cfg = summaryConfig
         askLoading = true
         askAnswer = nil
         askCitations = []
@@ -1366,12 +1202,11 @@ struct EpisodeView: View {
                 let pairs: [(index: Int, t: Double, text: String)] = lines.enumerated().map { (i, l) in
                     (i, l.t, l.text)
                 }
-                let r = try await ClaudeService.ask(
+                let r = try await AIService.ask(
                     question: q,
                     episodeTitle: ep.title,
                     lines: pairs,
-                    apiKey: key,
-                    model: store.settings.claudeModel
+                    config: cfg
                 )
                 askAnswer = r.answer
                 askCitations = r.citations.map { (line: $0.line, t: $0.t) }
@@ -1394,22 +1229,83 @@ struct EpisodeView: View {
         store.rebuildConcepts()
     }
 
-    private func saveHighlight(ep: Episode) {
-        let now = store.player.currentTime
-        let sorted = ep.sortedTranscriptLines
-        guard let line = sorted.last(where: { now >= $0.t }) else {
-            store.toast("No transcript line at this position")
-            return
+}
+
+/// Equatable so that on every player tick (which only flips `isActive` for
+/// the previously-active row and the newly-active row), SwiftUI skips
+/// re-rendering every other row in the transcript. Otherwise the entire
+/// ForEach body re-evaluates every 0.5s and the highlight-update feels sticky.
+private struct TranscriptRow: View, Equatable {
+    @Environment(\.brandAccent) private var accent: Color
+    @Environment(\.appLanguage) private var lang: AppLanguage
+    let time: Double
+    let speaker: String?
+    let text: String
+    let isActive: Bool
+    let onTap: () -> Void
+    /// Save the line as a highlight. Hooked up to a right-click context
+    /// menu — replaces the dead bookmark button that used to sit in the
+    /// header and only worked when the player happened to be at this
+    /// timestamp. Per-line save is way more discoverable.
+    let onSaveHighlight: () -> Void
+
+    static func == (lhs: TranscriptRow, rhs: TranscriptRow) -> Bool {
+        lhs.time == rhs.time
+            && lhs.text == rhs.text
+            && lhs.speaker == rhs.speaker
+            && lhs.isActive == rhs.isActive
+    }
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(alignment: .top, spacing: 18) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(Fmt.time(time))
+                        .font(.mono(10.5))
+                        .foregroundColor(Ink.tertiary)
+                    if let speaker {
+                        Text(speaker)
+                            .font(.sans(11.5, weight: .semibold))
+                            .foregroundColor(Ink.primary)
+                    }
+                }
+                .frame(width: 110, alignment: .leading)
+                .padding(.leading, 8)
+                .overlay(
+                    Rectangle().fill(isActive ? accent : .clear).frame(width: 2),
+                    alignment: .leading
+                )
+                Text(text)
+                    .font(.serif(16))
+                    .foregroundColor(isActive ? Ink.primary : Ink.secondary)
+                    .lineSpacing(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.trailing, 8)
+            }
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isActive ? accent.opacity(0.06) : .clear)
+            )
+            .contentShape(Rectangle())
         }
-        store.saveHighlight(episode: ep, at: line.t, quote: line.text)
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button {
+                onSaveHighlight()
+            } label: {
+                Label(t("Save highlight", lang), systemImage: "bookmark")
+            }
+        }
     }
 }
 
 struct DotPulse: View {
+    @Environment(\.brandAccent) private var accent: Color
     @State private var scale: CGFloat = 0.85
     var body: some View {
         Circle()
-            .fill(Brand.orange)
+            .fill(accent)
             .frame(width: 8, height: 8)
             .scaleEffect(scale)
             .animation(.easeInOut(duration: 1).repeatForever(autoreverses: true), value: scale)

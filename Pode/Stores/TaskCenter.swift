@@ -60,6 +60,11 @@ final class TaskCenter {
     func fail(_ id: UUID, _ message: String) {
         update(id) {
             $0.status = .failed(message)
+            // Surface the failure reason in the pill subtitle. Without
+            // this, the pill keeps the last stage label ("Loading model…")
+            // even after the work blew up, and users can't tell what went
+            // wrong without opening the episode.
+            $0.subtitle = message
         }
     }
 
@@ -87,6 +92,9 @@ struct TaskItem: Identifiable {
     /// Invoked when the user hits cancel on the pill. Owners attach their
     /// `Task` cancellation closure here.
     var onCancel: (@Sendable () -> Void)?
+    /// If this task is associated with a specific episode, store the ID so
+    /// the pill can deep-link back to it on click.
+    var episodeID: String? = nil
 
     enum Kind: Equatable {
         case transcribeLocal

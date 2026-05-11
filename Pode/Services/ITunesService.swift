@@ -103,6 +103,18 @@ enum ITunesService {
         return decoded.results.filter { $0.feedUrl != nil }
     }
 
+    /// Look up a fixed set of podcasts by their iTunes collectionIds. Used
+    /// to hydrate hand-curated rosters (CuratedCanon) with current artwork
+    /// and feed URLs. Filters results that came back without a feedUrl.
+    static func lookup(ids: [Int]) async throws -> [ITunesPodcast] {
+        guard !ids.isEmpty else { return [] }
+        let joined = ids.map(String.init).joined(separator: ",")
+        let url = URL(string: "https://itunes.apple.com/lookup?id=\(joined)&entity=podcast")!
+        let (data, _) = try await URLSession.shared.data(from: url)
+        let decoded = try sharedJSONDecoder.decode(SearchResult.self, from: data)
+        return decoded.results.filter { $0.feedUrl != nil }
+    }
+
     static func top(country: String = "cn", genreId: Int? = nil, limit: Int = 30) async throws -> [ITunesPodcast] {
         let genrePart = genreId.map { "/genre=\($0)" } ?? ""
         let topURL = URL(string: "https://itunes.apple.com/\(country)/rss/toppodcasts/limit=\(limit)\(genrePart)/json")!
