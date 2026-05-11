@@ -326,7 +326,11 @@ private struct Galaxy: View {
             let layout = computeLayout(width: geo.size.width, height: geo.size.height)
 
             ZStack {
-                // Aurora per cluster
+                // Aurora per cluster — purely decorative. SwiftUI hit-tests
+                // shape outlines (NOT visual alpha), so without this each
+                // 340pt aurora swallows hover/tap events for every node
+                // sitting inside it. Only one node per canvas was reachable
+                // (the one outside any aurora) before this fix.
                 ForEach(Array(layout.clusterCenters.enumerated()), id: \.offset) { _, c in
                     Circle()
                         .fill(
@@ -341,9 +345,12 @@ private struct Galaxy: View {
                         )
                         .frame(width: 340, height: 340)
                         .position(c.point)
+                        .allowsHitTesting(false)
                 }
 
-                // Cluster threads — pre-computed
+                // Cluster threads — pre-computed. Strokes don't usually
+                // hit-test, but disabling explicitly keeps the gesture
+                // surface tidy and the intent obvious.
                 ForEach(Array(layout.edges.enumerated()), id: \.offset) { _, edge in
                     Path { p in
                         p.move(to: CGPoint(x: edge.from.x, y: edge.from.y))
@@ -353,6 +360,7 @@ private struct Galaxy: View {
                         (colors[edge.cluster] ?? .gray).opacity(0.16),
                         lineWidth: 1
                     )
+                    .allowsHitTesting(false)
                 }
 
                 // Nodes — dot + label share the same hit-target so either
