@@ -64,10 +64,26 @@ struct EpisodeView: View {
     @State private var sortedCache: [StreamLine] = []
     @State private var activeLineIdx: Int = -1
     /// Wall-clock time of the last auto-scroll. We skip back-to-back
-    /// scrollTo calls within 0.4s so a fast burst of active-line
-    /// transitions doesn't stack into a fighting set of animations
-    /// inside the ScrollView.
+    /// scrollTo calls within the animation window so a fast burst of
+    /// active-line transitions doesn't stack into a fighting set of
+    /// animations inside the ScrollView.
     @State private var lastScrollAt: Date = .distantPast
+
+    /// Detects user scrolling. `.scrollPosition(id:)` binds the
+    /// currently-anchored row id. We compare against the row we LAST
+    /// programmatically scrolled to: if they diverge outside our own
+    /// animation settling window, the user moved the ScrollView and
+    /// we should stop yanking them back to the playhead.
+    @State private var observedAnchor: Int? = nil
+    /// Timestamp of our last programmatic scrollTo. `observedAnchor`
+    /// changes during the ~300-500ms animation that follows — those
+    /// changes are NOT user-driven, so we ignore anchor diffs within
+    /// this settling window.
+    @State private var lastProgrammaticScrollAt: Date = .distantPast
+    /// When the user last manually scrolled. While `now - this < 5s`
+    /// we suppress auto-scroll entirely so the user can read where
+    /// they scrolled to.
+    @State private var userScrolledAt: Date = .distantPast
 
     init(episodeId: String) {
         self.episodeId = episodeId
@@ -807,7 +823,17 @@ struct EpisodeView: View {
                        value: (transcribeJob?.streamingLines.isEmpty ?? true)
                            ? sortedCache.count
                            : (transcribeJob?.streamingLines.count ?? 0))
+            // Mark this stack as the scroll target so .scrollPosition(id:)
+            // can observe which row is anchored. Lets us distinguish
+            // user-driven scrolls from our own proxy.scrollTo settling.
+            .scrollTargetLayout()
         }
+        // Two-way binding of "which row id is at the center anchor".
+        // We only READ from this — we never write to it (programmatic
+        // scrolling stays on proxy.scrollTo so we control timing /
+        // animation). When it changes outside our scroll settling
+        // window, the user moved the ScrollView themselves.
+        .scrollPosition(id: $observedAnchor, anchor: .center)
         // Cache refresh triggers. The cache is the ONLY sorted list we
         // build; body never sorts.
         //   - count change: persist phase inserted/deleted rows.
@@ -839,6 +865,22 @@ struct EpisodeView: View {
             PerfCounters.shared.activeLineChanged()
             // Active line changed → fire one throttled scroll.
             performAutoScroll(proxy: proxy, ep: ep)
+        }
+        // User-scroll detection. `observedAnchor` changes for two
+        // reasons: (a) our own proxy.scrollTo animation settling
+        // (ignored — `lastProgrammaticScrollAt` was just set), or
+        // (b) the user moved the ScrollView themselves. The latter
+        // stamps `userScrolledAt`, which suppresses auto-scroll for
+        // 5 seconds so they can read where they scrolled to.
+        .onChange(of: observedAnchor) { _, _ in
+            let now = Date()
+            // Wider window than the animation itself (0.55s) — anchor
+            // changes can ripple a beat after the animation visually
+            // ends as ScrollView's layout settles.
+            if now.timeIntervalSince(lastProgrammaticScrollAt) < 0.9 {
+                return
+            }
+            userScrolledAt = now
         }
         .frame(height: tabContentHeight)
         }
@@ -893,15 +935,34 @@ struct EpisodeView: View {
         guard activeLineIdx >= 0,
               store.player.currentEpisodeID == ep.id else { return }
         let now = Date()
-        if now.timeIntervalSince(lastScrollAt) < 0.4 { return }
+        // 1. Animation-throttle: don't fire faster than the animation
+        //    itself can finish. Throttle (0.6s) > animation (0.4s) so
+        //    we never have two overlapping in-flight animations on the
+        //    same ScrollView — that was the "scroll war" producing
+        //    visible jitter on fast-talking podcasts.
+        if now.timeIntervalSince(lastScrollAt) < 0.6 { return }
+        // 2. User-scroll respect: if the user moved the ScrollView in
+        //    the last 5 seconds, leave them where they are. Resumes
+        //    automatically once the grace period elapses without new
+        //    user activity.
+        if now.timeIntervalSince(userScrolledAt) < 5.0 { return }
+
         let lines: [StreamLine] = transcribing
             ? (transcribeJob?.streamingLines ?? [])
             : sortedCache
         guard activeLineIdx < lines.count else { return }
         let key = lines[activeLineIdx].id
         lastScrollAt = now
+        // Stamp BEFORE triggering the animation so the impending
+        // `observedAnchor` changes (caused by our own scroll) fall
+        // inside the settling window and don't get classified as
+        // user activity.
+        lastProgrammaticScrollAt = now
         PerfCounters.shared.scrollFired()
-        withAnimation(.smooth(duration: 0.55, extraBounce: 0)) {
+        // Shorter animation (0.4s) so it ends well within the throttle
+        // window. Less time for the ScrollView to compete with any
+        // user gesture that lands during the animation.
+        withAnimation(.smooth(duration: 0.4, extraBounce: 0)) {
             proxy.scrollTo(key, anchor: .center)
         }
     }
