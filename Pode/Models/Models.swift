@@ -83,9 +83,13 @@ final class Episode {
     @Relationship(deleteRule: .cascade, inverse: \Highlight.episode)
     var highlights: [Highlight] = []
 
-    /// Transcript lines sorted by line index. Compute once per render pass and reuse.
+    /// Transcript lines in audio-time order. We sort on `t` (not
+    /// `lineIndex`) because live streaming inserts lines as the WhisperKit
+    /// VAD pipeline discovers them, which is parallel + out-of-order.
+    /// `lineIndex` is kept as a stable unique identity for SwiftUI
+    /// ForEach but is no longer a sort key.
     var sortedTranscriptLines: [TranscriptLineModel] {
-        transcriptLines.sorted { $0.lineIndex < $1.lineIndex }
+        transcriptLines.sorted { $0.t < $1.t }
     }
 
     init(id: String, guid: String, title: String, pubDate: Date, duration: Double, audioUrl: String,
@@ -145,13 +149,21 @@ final class Concept {
     var count: Int
     var episodeIDs: [String]
     var firstSeen: Date
+    /// LLM-generated short definition shown in `ConceptDrawer`. Generated
+    /// lazily on first drawer-open; preserved by `AppStore.rebuildConcepts`
+    /// across rebuilds (which would otherwise wipe it).
+    var aiDefinition: String?
+    var aiDefinedAt: Date?
 
-    init(name: String, cluster: String, count: Int = 1, episodeIDs: [String] = [], firstSeen: Date = .now) {
+    init(name: String, cluster: String, count: Int = 1, episodeIDs: [String] = [], firstSeen: Date = .now,
+         aiDefinition: String? = nil, aiDefinedAt: Date? = nil) {
         self.name = name
         self.cluster = cluster
         self.count = count
         self.episodeIDs = episodeIDs
         self.firstSeen = firstSeen
+        self.aiDefinition = aiDefinition
+        self.aiDefinedAt = aiDefinedAt
     }
 }
 

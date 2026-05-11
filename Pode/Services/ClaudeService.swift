@@ -139,7 +139,14 @@ enum AIService {
         let joined = transcript.joined(separator: " ")
         let trimmed = String(joined.prefix(24000))
         let baseSystem = """
-You are an editorial AI helping a thoughtful listener build a "personal canon" of ideas from podcast transcripts. Output strict JSON only — no prose, no markdown. Keys: summary (string, 2-3 sentences, in the voice of a careful editor), takeaways (array of 3-5 short crisp insights), concepts (array of 4-8 objects with {name: short noun phrase, cluster: one of "Editorial","Mind","Body","Craft","Other"}). Cluster meanings: Editorial = writing, the slow web, ideas about reading; Mind = perception, prediction, cognition; Body = sleep, attention, biology; Craft = sound, making, technique. Keep concept names ≤4 words.
+You are an editorial AI helping a thoughtful listener build a "personal canon" of ideas from podcast transcripts. Output strict JSON only — no prose, no markdown.
+
+Keys:
+- summary (string, 4-7 sentences in the voice of a careful editor): open with one sentence framing what the episode is about and who the guest is. Then trace the actual argument or arc — what's the main thesis, what evidence or stories carry it, what twist or turn does the conversation take. End with what someone walks away thinking. Be specific about content, not generic about "interesting topics".
+- takeaways (array of strings): one entry per distinct insight in the conversation. DO NOT cap at 3 or 5 — capture every separable idea worth remembering, in the order they appear. A short episode might have 4 takeaways; a long technical one might have 12-20. Each takeaway is a crisp single sentence (under 30 words) that conveys the actual claim, not a vague reference.
+- concepts (array of 4-10 objects with {name: short noun phrase ≤4 words, cluster: one of "Editorial","Mind","Body","Craft","Other"}).
+
+Cluster meanings: Editorial = writing, the slow web, ideas about reading; Mind = perception, prediction, cognition; Body = sleep, attention, biology; Craft = sound, making, technique.
 """
         // Language directive — `summary` and `takeaways` follow this; concept
         // `cluster` values STAY in English (they're internal taxonomy).
@@ -155,10 +162,18 @@ Transcript excerpt:
 
 Return JSON.
 """
-        let raw = try await call(config: config, system: system, user: user, maxTokens: 1200, jsonMode: true)
+        // Higher token budget since the new prompt asks for a longer
+        // summary + unbounded takeaway count. ~3500 ≈ 2500 words, plenty
+        // for the JSON wrapping a richly-itemized analysis even on dense
+        // technical conversations.
+        let raw = try await call(config: config, system: system, user: user, maxTokens: 3500, jsonMode: true)
         guard let json = extractJSON(from: raw) else { throw AIError.noJSON(config.provider) }
         let summary = (json["summary"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let takeaways = (json["takeaways"] as? [String])?.prefix(6).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? []
+        // No `prefix(...)` cap — takeaways length is now driven by the
+        // conversation. Trim individual entries and drop any empties.
+        let takeaways = ((json["takeaways"] as? [String]) ?? [])
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
         let conceptsRaw = (json["concepts"] as? [[String: Any]]) ?? []
         let concepts: [(name: String, cluster: String)] = conceptsRaw.prefix(10).compactMap {
             guard let name = ($0["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -196,6 +211,104 @@ Return JSON.
             return (line, t)
         }
         return AIAnswer(answer: answer, citations: citations)
+    }
+
+    /// Generate 3-5 content-aware question prompts the user can click as
+    /// shortcuts in the Ask pane. Prefers the precomputed summary +
+    /// takeaways when available (cheap + already structured); falls back
+    /// to a transcript excerpt otherwise.
+    static func suggestQuestions(transcript: [String],
+                                 summary: String?,
+                                 takeaways: [String],
+                                 episodeTitle: String,
+                                 showTitle: String,
+                                 config: AIClientConfig) async throws -> [String] {
+        // Build a compact grounding block. When we already have a summary
+        // and takeaways from `analyze`, lean on those — they're the model's
+        // own distillation of the episode and produce far sharper question
+        // suggestions than raw transcript chunks. Without them, fall back
+        // to the first ~6000 characters of transcript.
+        let grounding: String = {
+            var parts: [String] = []
+            if let s = summary?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty {
+                parts.append("Summary:\n\(s)")
+            }
+            if !takeaways.isEmpty {
+                let listed = takeaways.enumerated()
+                    .map { "\($0.offset + 1). \($0.element)" }
+                    .joined(separator: "\n")
+                parts.append("Takeaways:\n\(listed)")
+            }
+            if parts.isEmpty {
+                let joined = transcript.joined(separator: " ")
+                parts.append("Transcript excerpt:\n\(String(joined.prefix(6000)))")
+            }
+            return parts.joined(separator: "\n\n")
+        }()
+
+        let baseSystem = """
+You generate short, content-aware question prompts that a curious listener might click as a shortcut after listening to a specific podcast episode. Output strict JSON only — no prose, no markdown.
+
+Key:
+- questions (array of 3-5 strings): each question must be specific to THIS episode's actual content — name the person, idea, framework, claim, or moment in the question. Avoid generic questions like "What's the main argument?" or "Summarize this". Each question is under 14 words, ends with a question mark, and reads naturally — like something the listener would actually type.
+
+Examples of good (specific) vs bad (generic):
+GOOD: "Why does Su Yu think LLMs need a 'language agent'?"
+GOOD: "What's the difference between fast and slow reading they describe?"
+BAD: "What is the main point?"
+BAD: "Summarize the episode."
+"""
+        let system = languageDirected(baseSystem, language: config.language,
+                                      affecting: "the `questions` strings", stayEnglish: nil)
+        let user = """
+Show: \(showTitle)
+Episode: \(episodeTitle)
+
+\(grounding)
+
+Return JSON with a `questions` array.
+"""
+        let raw = try await call(config: config, system: system, user: user, maxTokens: 400, jsonMode: true)
+        guard let json = extractJSON(from: raw) else { throw AIError.noJSON(config.provider) }
+        let qs = ((json["questions"] as? [String]) ?? [])
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return Array(qs.prefix(5))
+    }
+
+    /// Generate a 2-4 sentence definition for a concept that surfaced
+    /// across the user's transcribed episodes. `mentions` is a small list
+    /// of `(episodeTitle, summaryOrSnippet)` pairs that ground the
+    /// definition in HOW the concept appears here, not in a generic
+    /// encyclopedia entry. Used by the Knowledge view's drawer.
+    static func defineConcept(name: String,
+                              cluster: String,
+                              mentions: [(episodeTitle: String, snippet: String)],
+                              config: AIClientConfig) async throws -> String {
+        let body = mentions.prefix(6).enumerated().map { idx, m in
+            "\(idx + 1). \"\(m.episodeTitle)\": \(String(m.snippet.prefix(800)))"
+        }.joined(separator: "\n")
+        let baseSystem = """
+You write tight, intellectually honest definitions of recurring concepts a listener has heard across podcasts. Output strict JSON only — no prose, no markdown.
+
+Key:
+- definition (string, 2-4 sentences): start by defining what the concept actually means in plain language — not just "the idea of X" or "a concept relating to Y". Then ground it in HOW it appears in the episodes below — what specific angle, claim, or debate the concept carries here. End with what makes this concept worth holding onto, or what it's NOT. Avoid encyclopedia-speak and avoid restating the concept name in the first three words.
+"""
+        let system = languageDirected(baseSystem, language: config.language,
+                                      affecting: "the `definition` string", stayEnglish: nil)
+        let user = """
+Concept: \(name)
+Cluster: \(cluster)
+
+Encountered across these episodes:
+\(body)
+
+Return JSON.
+"""
+        let raw = try await call(config: config, system: system, user: user, maxTokens: 600, jsonMode: true)
+        guard let json = extractJSON(from: raw) else { throw AIError.noJSON(config.provider) }
+        let def = (json["definition"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return def
     }
 
     /// Round-trip the configured provider with a tiny "say ok" prompt to

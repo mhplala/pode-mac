@@ -366,7 +366,7 @@ struct BrowseView: View {
     /// if they like what they see.
     private func openTile(_ p: ITunesPodcast, existing: Show?) {
         if let show = existing {
-            store.view = .show(show.id)
+            store.navigate(to: .show(show.id))
             return
         }
         preview = p
@@ -752,7 +752,7 @@ private struct BrowsePreviewView: View {
                 // the live page (BrowseView handles that path before us,
                 // but if somehow we got here, route them there).
                 Button {
-                    if let s = existingShow { store.view = .show(s.id) }
+                    if let s = existingShow { store.navigate(to: .show(s.id)) }
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark")
@@ -876,7 +876,7 @@ private struct BrowsePreviewView: View {
         subscribing = false
         // Hand off to the real (SwiftData-backed) detail page.
         if let newShow {
-            store.view = .show(newShow.id)
+            store.navigate(to: .show(newShow.id))
         }
     }
 }

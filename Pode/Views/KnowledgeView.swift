@@ -120,7 +120,7 @@ struct KnowledgeView: View {
                 .frame(maxWidth: 480)
                 .lineSpacing(2)
             Button {
-                store.view = .library
+                store.goTo(.library)
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "rectangle.grid.2x2").font(.system(size: 13))
@@ -171,7 +171,7 @@ struct KnowledgeView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     ForEach(highlights.prefix(6)) { h in
                         Button {
-                            if let ep = h.episode { store.view = .episode(ep.id) }
+                            if let ep = h.episode { store.navigate(to: .episode(ep.id)) }
                         } label: {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("\"\(h.quote)\"")
@@ -304,6 +304,11 @@ private struct GalaxyLayout {
     let nodes: [PositionedNode]
     let clusterCenters: [(cluster: String, point: CGPoint)]
     let edges: [(from: PositionedNode, to: PositionedNode, cluster: String)]
+    /// Pre-computed label centers keyed by node name. The label-placement
+    /// pass tries right → left → below → above for each node and picks the
+    /// first candidate that doesn't overlap another dot or already-placed
+    /// label, so dense Chinese labels stop colliding.
+    let labelPositions: [String: CGPoint]
 }
 
 private struct Galaxy: View {
@@ -346,11 +351,30 @@ private struct Galaxy: View {
                     )
                 }
 
-                // Nodes
+                // Nodes — dot + label share the same hit-target so either
+                // surface registers hover / tap. Tiny dots (7-15 pt) were
+                // hard to click reliably; now the label counts too.
                 ForEach(layout.nodes) { n in
                     let isSelected = selected == n.name
                     let isHover = hovered == n.name
                     let color = colors[n.cluster] ?? .gray
+                    let hitRadius = max(n.size + 8, 16)  // generous hit area
+
+                    // Invisible hit-target circle centred on the dot —
+                    // widens the click radius beyond the visible glyph
+                    // without affecting layout. `contentShape` keeps
+                    // hover/tap restricted to the circle.
+                    Circle()
+                        .fill(Color.white.opacity(0.0001))
+                        .frame(width: hitRadius * 2, height: hitRadius * 2)
+                        .contentShape(Circle())
+                        .position(x: n.x, y: n.y)
+                        .onTapGesture {
+                            selected = isSelected ? nil : n.name
+                        }
+                        .onHover { hov in
+                            hovered = hov ? n.name : (hovered == n.name ? nil : hovered)
+                        }
 
                     ZStack {
                         if isSelected || isHover {
@@ -369,17 +393,34 @@ private struct Galaxy: View {
                             )
                             .frame(width: n.size * 2, height: n.size * 2)
                     }
+                    .allowsHitTesting(false)   // visual only; hit goes to circle above
                     .position(x: n.x, y: n.y)
-                    .onTapGesture {
-                        selected = isSelected ? nil : n.name
-                    }
-                    .onHover { hovered = $0 ? n.name : (hovered == n.name ? nil : hovered) }
 
-                    // Label
+                    // Label — placed by the layout's collision-avoiding
+                    // pass (right / left / below / above), with a
+                    // parchment-toned backplate so any unavoidable
+                    // overlaps still read cleanly. Also a hit target so
+                    // clicking the text opens the concept drawer.
+                    let labelPos = layout.labelPositions[n.name]
+                        ?? CGPoint(x: n.x + n.size + 32, y: n.y)
                     Text(n.name)
                         .font(.sans(11.5, weight: isSelected || isHover ? .semibold : .medium))
                         .foregroundColor(isSelected || isHover ? Ink.primary : Ink.secondary)
-                        .position(x: n.x + n.size + 30, y: n.y)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .background(
+                            Capsule().fill(Color(hex: "#EFE3CE").opacity(0.82))
+                        )
+                        .contentShape(Capsule())
+                        .position(labelPos)
+                        .onTapGesture {
+                            selected = isSelected ? nil : n.name
+                        }
+                        .onHover { hov in
+                            hovered = hov ? n.name : (hovered == n.name ? nil : hovered)
+                        }
                 }
             }
         }
@@ -394,7 +435,7 @@ private struct Galaxy: View {
         let grouped = Dictionary(grouping: concepts, by: \.cluster)
         let clusters = ClusterOrder.filter { grouped[$0] != nil }
         guard !clusters.isEmpty else {
-            return GalaxyLayout(nodes: [], clusterCenters: [], edges: [])
+            return GalaxyLayout(nodes: [], clusterCenters: [], edges: [], labelPositions: [:])
         }
 
         let cols = min(clusters.count, 2)
@@ -443,11 +484,101 @@ private struct Galaxy: View {
                 }
             }
         }
-        return GalaxyLayout(nodes: nodes, clusterCenters: centers, edges: edges)
+
+        // 3. Label placement. For each node, try four anchor positions
+        //    (right, left, below, above) and pick the first one whose
+        //    bounding box doesn't collide with another dot, with an
+        //    already-placed label, or with the canvas edge. Bigger dots
+        //    are processed first so the visually-prominent labels get
+        //    the prime right-of-dot spot; smaller dots route around.
+        let placeOrder = nodes.indices.sorted { lhs, rhs in
+            if nodes[lhs].size != nodes[rhs].size { return nodes[lhs].size > nodes[rhs].size }
+            return nodes[lhs].name < nodes[rhs].name   // deterministic on resize
+        }
+        let dotBoxes: [Rect] = nodes.map { Rect.dot(p: $0, margin: 3) }
+        var placedLabelBoxes: [Rect] = []
+        var labelPositions: [String: CGPoint] = [:]
+        let labelH: Double = 18
+        let gap: Double = 12   // dot-to-label gap
+
+        for idx in placeOrder {
+            let n = nodes[idx]
+            let w = Self.estimateLabelWidth(n.name)
+            // Candidate centers — `.position` anchors at view center.
+            let candidates: [CGPoint] = [
+                CGPoint(x: n.x + n.size + gap + w / 2, y: n.y),
+                CGPoint(x: n.x - n.size - gap - w / 2, y: n.y),
+                CGPoint(x: n.x, y: n.y + n.size + gap + labelH / 2),
+                CGPoint(x: n.x, y: n.y - n.size - gap - labelH / 2),
+            ]
+            var chosen = candidates[0]
+            for cand in candidates {
+                let bb = Rect.label(center: cand, width: w, height: labelH, margin: 2)
+                // Canvas bounds — give 2pt slack so we don't reject a
+                // label that's barely poking the edge.
+                if bb.minX < -2 || bb.maxX > width + 2 ||
+                   bb.minY < -2 || bb.maxY > height + 2 { continue }
+                // Dot collisions (skip own).
+                var clean = true
+                for i in dotBoxes.indices where i != idx {
+                    if bb.overlaps(dotBoxes[i]) { clean = false; break }
+                }
+                if !clean { continue }
+                // Existing label collisions.
+                for lb in placedLabelBoxes where bb.overlaps(lb) {
+                    clean = false; break
+                }
+                if clean { chosen = cand; break }
+            }
+            placedLabelBoxes.append(Rect.label(center: chosen, width: w, height: labelH, margin: 2))
+            labelPositions[n.name] = chosen
+        }
+
+        return GalaxyLayout(nodes: nodes, clusterCenters: centers,
+                            edges: edges, labelPositions: labelPositions)
+    }
+
+    /// Approximate the rendered width of a label without measuring text —
+    /// CJK chars are ~12pt wide at sans 11.5pt, ASCII ~6.5pt, plus the
+    /// capsule's 10pt horizontal padding.
+    private static func estimateLabelWidth(_ s: String) -> Double {
+        var w: Double = 0
+        for u in s.unicodeScalars {
+            let v = u.value
+            if (0x4E00...0x9FFF).contains(v) ||
+               (0x3040...0x30FF).contains(v) ||
+               (0xAC00...0xD7AF).contains(v) {
+                w += 12        // CJK / hiragana-katakana / hangul
+            } else if v < 128 {
+                w += 6.5       // ASCII
+            } else {
+                w += 9         // misc symbols, accents
+            }
+        }
+        return w + 10
     }
 
     private static let ClusterOrder = ["Editorial", "Mind", "Body", "Craft", "Other"]
     private var ClusterOrder: [String] { Self.ClusterOrder }
+}
+
+/// Axis-aligned rectangle helper used only by the label-placement pass.
+/// Cheaper than CGRect for the inner overlap loop.
+private struct Rect {
+    let minX, minY, maxX, maxY: Double
+    func overlaps(_ o: Rect) -> Bool {
+        !(maxX <= o.minX || minX >= o.maxX || maxY <= o.minY || minY >= o.maxY)
+    }
+    static func dot(p: PositionedNode, margin: Double) -> Rect {
+        Rect(minX: p.x - p.size - margin, minY: p.y - p.size - margin,
+             maxX: p.x + p.size + margin, maxY: p.y + p.size + margin)
+    }
+    static func label(center: CGPoint, width: Double, height: Double, margin: Double) -> Rect {
+        Rect(minX: Double(center.x) - width / 2 - margin,
+             minY: Double(center.y) - height / 2 - margin,
+             maxX: Double(center.x) + width / 2 + margin,
+             maxY: Double(center.y) + height / 2 + margin)
+    }
 }
 
 private struct PositionedNode: Identifiable {
@@ -561,10 +692,18 @@ private struct Timeline: View {
 private struct ConceptDrawer: View {
     @Environment(\.appLanguage) private var lang: AppLanguage
     @Environment(AppStore.self) private var store
+    @Environment(\.modelContext) private var modelContext
     let concept: Concept
     let episodes: [Episode]
     let shows: [Show]
     let onClose: () -> Void
+
+    @State private var defining: Bool = false
+    @State private var defineError: String? = nil
+    /// Tracks which concept name the in-flight definition fetch is for —
+    /// guards against the user clicking through several concepts in quick
+    /// succession landing a stale response on the wrong concept.
+    @State private var definingFor: String? = nil
 
     private static let clusterColors: [String: Color] = [
         "Editorial": Color(hex: "#d06a3a"),
@@ -635,6 +774,11 @@ private struct ConceptDrawer: View {
                 alignment: .bottom
             )
 
+            // AI-generated short definition. Auto-fetched on first open
+            // (cached on the Concept model so reopening the same concept
+            // is instant). Falls back gracefully if AI isn't configured.
+            definitionBlock(mentioned: mentioned)
+
             EyebrowText(text: t("From the transcripts", lang).uppercased())
                 .padding(.top, 14).padding(.bottom, 10)
 
@@ -663,7 +807,7 @@ private struct ConceptDrawer: View {
                                         .lineLimit(3)
                                 }
                                 Button {
-                                    store.view = .episode(ep.id)
+                                    store.navigate(to: .episode(ep.id))
                                 } label: {
                                     Text(t("Open episode →", lang))
                                 }
@@ -683,5 +827,125 @@ private struct ConceptDrawer: View {
         }
         .padding(22)
         .glass(.panel)
+        // Auto-fetch the definition the first time this drawer renders
+        // for a concept that doesn't have one yet.
+        .task(id: concept.name) {
+            if concept.aiDefinition == nil { await fetchDefinition() }
+        }
+    }
+
+    @ViewBuilder
+    private func definitionBlock(mentioned: [Episode]) -> some View {
+        if let def = concept.aiDefinition, !def.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    EyebrowText(text: t("Definition", lang).uppercased())
+                    Spacer()
+                    Button {
+                        Task { await fetchDefinition() }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "arrow.clockwise").font(.system(size: 9))
+                            Text(t("Regenerate", lang)).font(.mono(10))
+                        }
+                        .foregroundColor(Ink.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(defining)
+                }
+                Text(def)
+                    .font(.serif(14.5))
+                    .foregroundColor(Ink.primary)
+                    .lineSpacing(3)
+                    .textSelection(.enabled)
+            }
+            .padding(.top, 14)
+        } else if defining {
+            VStack(alignment: .leading, spacing: 6) {
+                EyebrowText(text: t("Definition", lang).uppercased())
+                HStack(spacing: 6) {
+                    Text(t("Defining", lang))
+                        .italic()
+                    Text("…")
+                }
+                .font(.serif(14))
+                .foregroundColor(Ink.tertiary)
+            }
+            .padding(.top, 14)
+        } else if !summaryConfigured {
+            // Quietly skip the block when AI isn't configured — no noisy
+            // "configure your key" prompt; the rest of the drawer (counts,
+            // episode list) is still useful on its own.
+            EmptyView()
+        } else if let err = defineError {
+            VStack(alignment: .leading, spacing: 6) {
+                EyebrowText(text: t("Definition", lang).uppercased())
+                Text(err)
+                    .font(.sans(12))
+                    .foregroundColor(Danger.primary)
+                Button(t("Try again", lang)) {
+                    Task { await fetchDefinition() }
+                }
+                .buttonStyle(TextButtonStyle())
+            }
+            .padding(.top, 14)
+        }
+    }
+
+    private var summaryConfig: AIClientConfig {
+        AIClientConfig(settings: store.settings)
+    }
+    private var summaryConfigured: Bool {
+        !summaryConfig.apiKey.isEmpty && !summaryConfig.model.isEmpty
+    }
+
+    @MainActor
+    private func fetchDefinition() async {
+        guard summaryConfigured else { return }
+        // Capture the concept name we're fetching FOR so a late response
+        // for a previous concept doesn't clobber the current one.
+        let conceptName = concept.name
+        definingFor = conceptName
+        defining = true
+        defineError = nil
+
+        // Gather grounding snippets: prefer each episode's AI summary
+        // (already a tight distillation). If none exist, fall back to the
+        // first few transcript lines that contain the concept name.
+        let mentioned = episodes.filter { concept.episodeIDs.contains($0.id) }
+        let mentions: [(episodeTitle: String, snippet: String)] = mentioned.prefix(6).map { ep in
+            if let s = ep.aiSummary, !s.isEmpty {
+                return (ep.title, s)
+            }
+            // Pluck up to 3 transcript lines that mention the concept by
+            // substring — cheap heuristic, no embedding needed.
+            let needles = ep.sortedTranscriptLines
+                .filter { $0.text.localizedCaseInsensitiveContains(conceptName) }
+                .prefix(3)
+                .map { $0.text }
+            return (ep.title, needles.joined(separator: " … "))
+        }
+
+        do {
+            let def = try await AIService.defineConcept(
+                name: conceptName,
+                cluster: concept.cluster,
+                mentions: mentions,
+                config: summaryConfig
+            )
+            // Discard if the user navigated away mid-flight.
+            guard definingFor == conceptName, !def.isEmpty else {
+                defining = false
+                return
+            }
+            concept.aiDefinition = def
+            concept.aiDefinedAt = .now
+            try? modelContext.save()
+        } catch {
+            if definingFor == conceptName {
+                defineError = error.localizedDescription
+            }
+        }
+        defining = false
     }
 }

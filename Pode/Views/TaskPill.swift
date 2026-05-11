@@ -17,7 +17,7 @@ struct TaskPill: View {
                 // but future generic kinds — e.g. concept rebuild — should
                 // not crash on click).
                 if let id = item.episodeID {
-                    store.view = .episode(id)
+                    store.navigate(to: .episode(id))
                 }
             } label: {
                 VStack(alignment: .leading, spacing: 6) {

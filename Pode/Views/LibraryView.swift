@@ -63,7 +63,7 @@ struct LibraryView: View {
                         .italic()
                         .foregroundColor(Ink.secondary)
                     Button {
-                        store.view = .browse
+                        store.goTo(.browse)
                     } label: {
                         HStack(spacing: 8) {
                             Image(systemName: "globe")
@@ -84,7 +84,7 @@ struct LibraryView: View {
                 ) {
                     ForEach(shows) { show in
                         Button {
-                            store.view = .show(show.id)
+                            store.navigate(to: .show(show.id))
                         } label: {
                             VStack(alignment: .leading, spacing: 0) {
                                 CoverView(artworkUrl: show.artworkUrl, title: show.title,
@@ -286,7 +286,7 @@ struct ShowDetailView: View {
         // legible against any content scrolling underneath.
         .overlay(alignment: .topLeading) {
             Button {
-                store.view = .library
+                store.back()
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "chevron.left")
@@ -307,7 +307,9 @@ struct ShowDetailView: View {
             Button(t("Cancel", lang), role: .cancel) {}
             Button(t("Unsubscribe", lang), role: .destructive) {
                 store.unsubscribe(showId: showId)
-                store.view = .library
+                // Show is gone — drop the stale entry from the back
+                // stack and root back to Library.
+                store.goTo(.library)
             }
         } message: {
             Text(t("Episodes, transcripts and highlights for this show will be removed.", lang))

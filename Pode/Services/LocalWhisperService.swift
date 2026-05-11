@@ -13,7 +13,9 @@ import WhisperKit
 enum LocalWhisperModel: String, CaseIterable, Codable {
     case fast = "openai_whisper-small"
     case balanced = "openai_whisper-medium"
-    case highest = "openai_whisper-large-v3-turbo"
+    // WhisperKit's HF repo uses a versioned variant name for turbo —
+    // the bare "openai_whisper-large-v3-turbo" does NOT exist there.
+    case highest = "openai_whisper-large-v3-v20240930_turbo"
 
     var displayName: String {
         switch self {
@@ -29,18 +31,24 @@ enum LocalWhisperModel: String, CaseIterable, Codable {
         case .highest: return "~1.5 GB"
         }
     }
+    /// Rough wall-clock minutes to transcribe one hour of audio on an
+    /// M1/M2/M3 Mac with WhisperKit's ANE acceleration + parallel VAD
+    /// workers. Real numbers vary by chip, but the ordering is correct:
+    /// `highest` is **faster** than `balanced` because large-v3-turbo's
+    /// decoder is 4 layers vs medium's 24 — it's a speed-tuned variant
+    /// of large, not a heavier model.
     var speedLabel: String {
         switch self {
-        case .fast: return "~5 min/h"
-        case .balanced: return "~12 min/h"
-        case .highest: return "~25 min/h"
+        case .fast:     return "~3 min/h"
+        case .balanced: return "~6 min/h"
+        case .highest:  return "~4 min/h"
         }
     }
     var qualityLabel: String {
         switch self {
-        case .fast: return "basic"
+        case .fast:     return "basic"
         case .balanced: return "great"
-        case .highest: return "best"
+        case .highest:  return "best"
         }
     }
     /// Approximate on-disk size in bytes — used for the pre-flight disk check.
@@ -76,6 +84,44 @@ enum LocalWhisperStage: Sendable {
     case downloadingModel(progress: Double)   // 0..1
     case loadingModel
     case transcribing(progress: Double)       // 0..1, derived from segment timestamps / audio duration
+}
+
+/// One transcript line emitted live during transcription (before the
+/// pipeline fully completes).
+///
+/// Time model — important and easy to get wrong:
+/// - `seek` is the **chunk's** start sample position in the source
+///   audio. WhisperKit's VAD pipeline cuts audio into chunks; every
+///   segment that comes out of a single chunk shares the same `seek`
+///   value. **`seek` is NOT a unique per-segment key.**
+/// - `start` is the segment's start time **relative to the chunk** (in
+///   seconds). Different segments within a chunk have different `start`s.
+/// - `t` is the segment's absolute start time in the source audio,
+///   precomputed here as `Double(seek)/sampleRate + start` so callers
+///   don't have to remember the math.
+///
+/// Dedup-safe key is the composite `(seek, startMillis)`. Using `seek`
+/// alone collapses every chunk down to a single segment — which is
+/// exactly the bug that made early streaming look broken.
+struct StreamingSegment: Sendable, Hashable {
+    let seek: Int
+    let start: Double
+    let t: Double
+    let text: String
+}
+
+/// How many parallel decoder workers to run inside WhisperKit's VAD
+/// pipeline. More workers = faster transcription, more RAM. We size it
+/// against the user's machine so a 4-core MacBook Air doesn't try to
+/// pretend it's an M3 Max.
+///
+/// Apple Silicon cores are a mix of performance + efficiency cores, all
+/// reported as "active processors". Half the active count, clamped to
+/// [2, 8], gives a sane default: M1 (8) → 4, M3 Pro (11) → 5, M3 Max
+/// (14) → 7. The 8 ceiling protects RAM on the largest models.
+private func recommendedWorkerCount() -> Int {
+    let cores = ProcessInfo.processInfo.activeProcessorCount
+    return max(2, min(cores / 2, 8))
 }
 
 /// Thread-safe monotonic max for progress tracking under parallel callbacks.
@@ -263,19 +309,25 @@ actor LocalWhisperService {
 
     /// Runs the audio file through the pipeline.
     ///
-    /// `onStage` fires for each pipeline phase (download / load / transcribe);
-    /// while transcribing it carries a 0..1 progress fraction taken from the
+    /// `onStage` fires for each pipeline phase (download / load / transcribe).
+    /// While transcribing it carries a 0..1 progress fraction taken from the
     /// running maximum segment end timestamp seen across parallel workers.
-    /// `onSegment` is intentionally NOT used to populate the UI live — VAD
-    /// chunking emits chunk-local timestamps that aren't absolute until
-    /// WhisperKit's `updateSeekOffsetsForResults` runs at the end. The caller
-    /// should rely on the returned `WhisperResult.lines` for accurate `t`.
+    ///
+    /// `onSegment` (new) emits batches of `StreamingSegment` as the VAD
+    /// pipeline discovers them. `seg.seek` is already absolute (in source-
+    /// audio sample counts) by the time WhisperKit fires the callback, so
+    /// `seek / sampleRate` is a trustworthy timestamp for live display.
+    /// `seg.start` / `seg.end` are chunk-local and shouldn't be used here.
+    /// Callers should dedupe by `seek` and treat the streamed lines as
+    /// progressive — the post-call `WhisperResult.lines` is the same data,
+    /// passed through `updateSeekOffsetsForResults` for safety.
     func transcribe(
         audioFileURL: URL,
         model: LocalWhisperModel,
         language: String? = nil,
         audioDuration: Double,
-        onStage: @MainActor @Sendable @escaping (LocalWhisperStage) -> Void
+        onStage: @MainActor @Sendable @escaping (LocalWhisperStage) -> Void,
+        onSegment: (@MainActor @Sendable ([StreamingSegment]) -> Void)? = nil
     ) async throws -> WhisperResult {
         try await prepare(model: model, onStage: onStage)
         guard let pipe = pipeline else {
@@ -302,6 +354,35 @@ actor LocalWhisperService {
                 let frac = max(0, min(1, progressBox.value / audioDuration))
                 Task { @MainActor in onStage(.transcribing(progress: frac)) }
             }
+
+            // Stream segments to the UI. `seg.seek` gives the **chunk's**
+            // absolute start (in samples); `seg.start` is chunk-local
+            // seconds. The segment's absolute time is the sum.
+            //
+            // Earlier versions stored just `seg.seek/sampleRate` as the
+            // line time, which made every segment in a single chunk
+            // share an identical t and visually pile up on one point of
+            // the timeline. The dedup key was also `seg.seek` alone —
+            // so 7 out of 8 segments per chunk got dropped at the
+            // dedup stage. Both bugs are fixed by carrying `seg.start`
+            // through the StreamingSegment.
+            if let onSegment {
+                let lines: [StreamingSegment] = segments.compactMap { seg in
+                    let trimmed = seg.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { return nil }
+                    let chunkStartSec = Double(seg.seek) / sampleRate
+                    let segStart = Double(seg.start)
+                    return StreamingSegment(
+                        seek: seg.seek,
+                        start: segStart,
+                        t: chunkStartSec + segStart,
+                        text: trimmed
+                    )
+                }
+                if !lines.isEmpty {
+                    Task { @MainActor in onSegment(lines) }
+                }
+            }
         }
         pipe.transcriptionStateCallback = { state in
             if state == .transcribing {
@@ -316,6 +397,8 @@ actor LocalWhisperService {
         // - `language == "zh"` etc. → pin the language from the start.
         // `skipSpecialTokens: true` strips `<|zh|>`, `<|transcribe|>` etc.
         // from the line text.
+        // - `concurrentWorkerCount` set from machine: more workers ⇒ faster
+        //   on long episodes, at the cost of RAM (each holds decoder state).
         let options = DecodingOptions(
             verbose: false,
             task: .transcribe,
@@ -324,6 +407,7 @@ actor LocalWhisperService {
             usePrefillPrompt: true,
             detectLanguage: language == nil,
             skipSpecialTokens: true,
+            concurrentWorkerCount: recommendedWorkerCount(),
             chunkingStrategy: .vad
         )
 

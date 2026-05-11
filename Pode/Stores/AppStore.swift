@@ -28,6 +28,16 @@ final class AppStore {
     var toasts: [ToastItem] = []
     var refreshing: Bool = false
 
+    /// Drill-down navigation stack. `navigate(to:)` pushes the current
+    /// view; `back()` pops. Sidebar top-level destinations clear the
+    /// stack via `goTo(_:)` so "back" from a freshly-rooted location
+    /// doesn't try to dig back into a previous root's history.
+    ///
+    /// Bounded so a user wandering deep into shows + episodes doesn't
+    /// retain an unbounded chain of `.episode(id)` cases.
+    private var navStack: [AppView] = []
+    private let navStackLimit = 12
+
     /// Last view BEFORE we routed the user to Browse for an iTunes search.
     /// Set only when the sidebar search field navigates them away; never
     /// touched if the user was already on Browse or if they navigate via
@@ -112,6 +122,42 @@ final class AppStore {
         self.modelContext = ctx
         loadSettings()
         startAutoRefresh()
+    }
+
+    // MARK: - Navigation
+
+    /// Drill-down navigation: push the current view onto the back stack
+    /// and switch to `next`. Use for any "deeper" transition — clicking
+    /// a show row in Library, opening an episode from Listen Now's queue,
+    /// routing to Settings from an "Add your key" prompt, etc.
+    func navigate(to next: AppView) {
+        guard view != next else { return }
+        navStack.append(view)
+        if navStack.count > navStackLimit {
+            navStack.removeFirst(navStack.count - navStackLimit)
+        }
+        view = next
+    }
+
+    /// Top-level navigation: clears the back stack and jumps to `root`.
+    /// Use for sidebar primary destinations (Listen Now / Browse /
+    /// Library / Knowledge / Settings) — those are root choices, and
+    /// pressing Back from somewhere drilled-down off the new root
+    /// should not bounce the user across roots.
+    func goTo(_ root: AppView) {
+        navStack.removeAll(keepingCapacity: true)
+        view = root
+    }
+
+    /// Pop the back stack. If empty (deep-linked into a view with no
+    /// prior history, e.g. cold-app Now Playing pill click), fall back
+    /// to Listen Now as the sensible default landing page.
+    func back() {
+        if let prev = navStack.popLast() {
+            view = prev
+        } else {
+            view = .listenNow
+        }
     }
 
     /// Background timer that keeps subscribed shows current without
@@ -244,6 +290,14 @@ final class AppStore {
             case .playbackRate: if let v = r.doubleValue { s.playbackRate = v }
             case .none: break
             }
+        }
+        // One-shot migration: an earlier build saved a turbo variant
+        // name that doesn't exist in WhisperKit's HF repo. Replace
+        // with the actual variant string so the next transcribe attempt
+        // doesn't fail with "No models found matching …".
+        if s.localWhisperModel == "openai_whisper-large-v3-turbo" {
+            s.localWhisperModel = "openai_whisper-large-v3-v20240930_turbo"
+            saveSettings(s)
         }
         self.settings = s
         // Restore the user's preferred playback rate on launch so the
@@ -669,8 +723,18 @@ final class AppStore {
     func rebuildConcepts() {
         guard let ctx = modelContext else { return }
         let conceptDescriptor = FetchDescriptor<Concept>()
+        // Snapshot existing AI definitions BEFORE wiping the table — the
+        // rebuild pass below recomputes count / episodeIDs from scratch,
+        // but we don't want to lose the LLM-generated `aiDefinition` text
+        // (which costs money + latency to regenerate).
+        var preservedDefs: [String: (def: String?, at: Date?)] = [:]
         if let existing = try? ctx.fetch(conceptDescriptor) {
-            for c in existing { ctx.delete(c) }
+            for c in existing {
+                if c.aiDefinition != nil {
+                    preservedDefs[c.name] = (c.aiDefinition, c.aiDefinedAt)
+                }
+                ctx.delete(c)
+            }
         }
         // Only fetch episodes that have AI concepts.
         let epDescriptor = FetchDescriptor<Episode>()
@@ -689,9 +753,12 @@ final class AppStore {
                     }
                 } else {
                     let cluster = Self.inferCluster(name: name)
+                    let preserved = preservedDefs[name]
                     let c = Concept(name: name, cluster: cluster, count: 1,
                                     episodeIDs: [ep.id],
-                                    firstSeen: ep.transcribedAt ?? ep.pubDate)
+                                    firstSeen: ep.transcribedAt ?? ep.pubDate,
+                                    aiDefinition: preserved?.def,
+                                    aiDefinedAt: preserved?.at)
                     bucket[name] = c
                     ctx.insert(c)
                 }

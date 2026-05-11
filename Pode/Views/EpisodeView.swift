@@ -28,13 +28,23 @@ struct EpisodeView: View {
 
     @State private var analyzing: Bool = false
     @State private var pickingModel: Bool = false
-    @State private var pickerSelection: LocalWhisperModel = .balanced
+    @State private var pickerSelection: LocalWhisperModel = .highest
 
     @State private var askValue: String = ""
     @State private var askLoading: Bool = false
     @State private var askAnswer: String? = nil
     @State private var askCitations: [(line: Int, t: Double)] = []
     @State private var askError: String? = nil
+
+    // Content-aware suggested questions for the Ask pane. We fetch these
+    // lazily the first time the user enters the Ask tab on a transcribed
+    // episode, and again whenever the analysis (summary/takeaways) updates.
+    // `suggestionsLoadedKey` carries the episode id + a hash of the summary
+    // so we know when to refetch; an empty array falls back to the generic
+    // defaults at render time.
+    @State private var suggestedQuestions: [String] = []
+    @State private var suggestionsLoading: Bool = false
+    @State private var suggestionsLoadedKey: String? = nil
 
     @State private var confirmDeleteTranscript = false
     @State private var confirmRemoveDownload = false
@@ -63,7 +73,18 @@ struct EpisodeView: View {
             let chromeBelow: CGFloat = 110
             let height = max(420, geo.size.height - chromeAbove - chromeBelow)
             content
-                .onAppear { tabContentHeight = height }
+                .onAppear {
+                    tabContentHeight = height
+                    // Land on the transcript tab if this episode is
+                    // already transcribed; otherwise stay on the
+                    // description default. EpisodeView's @State resets
+                    // on every navigation, so this only runs as the
+                    // user enters — manual tab switches afterward are
+                    // never overridden.
+                    if let ep = episodes.first, !ep.transcriptLines.isEmpty {
+                        tab = .transcript
+                    }
+                }
                 .onChange(of: geo.size.height) { _, _ in
                     tabContentHeight = height
                 }
@@ -73,7 +94,7 @@ struct EpisodeView: View {
                 // scrolls long descriptions / transcripts.
                 .overlay(alignment: .topLeading) {
                     Button {
-                        store.view = .listenNow
+                        store.back()
                     } label: {
                         HStack(spacing: 5) {
                             Image(systemName: "chevron.left").font(.system(size: 11))
@@ -267,7 +288,7 @@ struct EpisodeView: View {
         if store.settings.transcribeEngine == "local",
            !store.settings.localWhisperPicked {
             // Pre-select what's saved (default Balanced).
-            pickerSelection = LocalWhisperModel(rawValue: store.settings.localWhisperModel) ?? .balanced
+            pickerSelection = LocalWhisperModel(rawValue: store.settings.localWhisperModel) ?? .highest
             pickingModel = true
             return
         }
@@ -343,7 +364,7 @@ struct EpisodeView: View {
                         Text(m.displayName)
                             .font(.serif(14, weight: .medium))
                             .foregroundColor(Ink.primary)
-                        if m == .balanced {
+                        if m == .highest {
                             Text(t("Recommended", lang))
                                 .font(.mono(9.5, weight: .semibold))
                                 .foregroundColor(accent)
@@ -610,6 +631,7 @@ struct EpisodeView: View {
 
     @ViewBuilder
     private func transcriptTab(ep: Episode) -> some View {
+        ScrollViewReader { proxy in
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 if ep.transcriptLines.isEmpty && !transcribing {
@@ -634,32 +656,41 @@ struct EpisodeView: View {
                     .padding(36)
                 }
                 if let job = transcribeJob, job.task != nil {
-                    HStack(spacing: 10) {
-                        DotPulse()
-                        Text(job.stage == .fetchingAudio
-                             ? "FETCHING AUDIO"
-                             : "STREAMING · \(store.settings.whisperModel)")
-                            .font(.mono(11, weight: .semibold))
-                            .tracking(0.7)
-                            .foregroundColor(accent)
-                        Spacer()
-                    }
-                    .padding(.horizontal, 4)
-                    .padding(.bottom, 16)
-                    .overlay(
-                        Rectangle()
-                            .fill(Color.black.opacity(0.08))
-                            .frame(height: 1)
-                            .padding(.bottom, 14),
-                        alignment: .bottom
+                    TranscribingBanner(
+                        stage: job.stage,
+                        progress: job.overall,
+                        modelLabel: activeTranscribeModelLabel,
+                        accent: accent
                     )
                     .padding(.horizontal, 24)
                     .padding(.top, 24)
+                    .padding(.bottom, 16)
+                    .transition(.opacity)
                 }
 
+                // Display layer.
+                //
+                // Backend transcribes in parallel via WhisperKit's VAD
+                // pipeline — chunks finish out of order, so a naive
+                // "render everything sorted by t" yields scattered text
+                // (chunk 0 lines, gap, chunk 5 lines, bigger gap, chunk
+                // 12 lines …). That feels broken even though the data
+                // is correct.
+                //
+                // While the transcribe job is live, render only the
+                // *contiguous prefix*: the longest run of lines starting
+                // at the first one where adjacent gaps are reasonable.
+                // As earlier chunks fill in, the prefix lengthens
+                // naturally — the user reads the audio linearly even
+                // though we're computing it in parallel. Once the job
+                // ends, the cleanupAfterStream pass has run and we
+                // show everything.
                 let sorted = ep.sortedTranscriptLines
-                let activeIdx = activeIndex(in: sorted, ep: ep)
-                ForEach(Array(sorted.enumerated()), id: \.element.lineIndex) { i, line in
+                let visible = transcribing
+                    ? contiguousPrefix(of: sorted)
+                    : sorted
+                let activeIdx = activeIndex(in: visible, ep: ep)
+                ForEach(Array(visible.enumerated()), id: \.element.lineIndex) { i, line in
                     TranscriptRow(
                         time: line.t,
                         speaker: line.speaker,
@@ -676,12 +707,91 @@ struct EpisodeView: View {
                         }
                     )
                     .equatable()
+                    .transition(.asymmetric(
+                        // New lines slide up and fade in from below. The
+                        // ForEach insertion animation only fires when the
+                        // parent has a value-driven `.animation(value:)`
+                        // modifier (added below) — without that the
+                        // transition is a no-op.
+                        insertion: .opacity.combined(with: .move(edge: .bottom)),
+                        removal: .opacity
+                    ))
+                }
+                // Skeleton placeholders while we're waiting for either
+                // (a) the very first lines, or (b) earlier chunks to fill
+                // in behind a contiguous-prefix gap.
+                if transcribing {
+                    if visible.isEmpty {
+                        // Whole first stretch is still decoding — 4 rows.
+                        VStack(spacing: 0) {
+                            ForEach(0..<4, id: \.self) { _ in
+                                TranscriptLineSkeleton()
+                            }
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.top, 16)
+                        .transition(.opacity)
+                    } else if visible.count < sorted.count {
+                        // Some lines arrived but a later batch hasn't.
+                        VStack(spacing: 0) {
+                            ForEach(0..<2, id: \.self) { _ in
+                                TranscriptLineSkeleton()
+                            }
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.top, 6)
+                        .transition(.opacity)
+                    }
                 }
             }
             .padding(.horizontal, 24)
             .padding(.vertical, ep.transcriptLines.isEmpty ? 0 : 24)
+            // Drives the row-level insertion animations on the
+            // TranscriptRow ForEach above + the skeleton fade-outs.
+            // Without a value-bound `.animation(...)`, SwiftUI can't
+            // tell when to play `.transition`.
+            .animation(.easeOut(duration: 0.28), value: ep.transcriptLines.count)
+        }
+        // Auto-scroll only fires when the active line actually changes.
+        // Earlier we tried ticking on every player update — that ran
+        // `scrollTo` ~2× a second on the same row, each one nudging
+        // SwiftUI through its layout pass and producing a visible
+        // jitter (the "flicker"). Keying off the resolved active line
+        // means at most one scroll per several seconds, exactly when
+        // the audio crosses into a new transcript line.
+        .onChange(of: activeLineKey(in: ep)) { _, newKey in
+            guard let newKey, store.player.currentEpisodeID == ep.id else { return }
+            // `.smooth` is Apple's modern scroll-like easing curve.
+            // 0.55s feels paced for line-by-line glide; `extraBounce:
+            // 0` keeps it from overshooting and settling jitter-free.
+            withAnimation(.smooth(duration: 0.55, extraBounce: 0)) {
+                proxy.scrollTo(newKey, anchor: .center)
+            }
         }
         .frame(height: tabContentHeight)
+        }
+    }
+
+    /// The `lineIndex` of whichever transcript row matches the current
+    /// playback time on this episode — used as a scroll-to key. Returns
+    /// nil when nothing's playing or the transcript hasn't loaded yet.
+    private func activeLineKey(in ep: Episode) -> Int? {
+        guard store.player.currentEpisodeID == ep.id else { return nil }
+        let now = store.player.currentTime
+        let sorted = ep.sortedTranscriptLines
+        return sorted.last(where: { now >= $0.t })?.lineIndex
+    }
+
+    /// Human-readable model label for the transcribing banner. Cloud
+    /// engine shows the OpenAI Whisper model id; local engine shows
+    /// the WhisperKit variant name. Previously the banner always read
+    /// "STREAMING · whisper-1" regardless of engine — wrong for local.
+    private var activeTranscribeModelLabel: String {
+        if store.settings.transcribeEngine == "local" {
+            let m = LocalWhisperModel(rawValue: store.settings.localWhisperModel) ?? .highest
+            return m.displayName.uppercased()
+        }
+        return store.settings.whisperModel
     }
 
     @ViewBuilder
@@ -797,6 +907,47 @@ struct EpisodeView: View {
         guard store.player.currentEpisodeID == ep.id else { return -1 }
         let now = store.player.currentTime
         return sorted.lastIndex(where: { now >= $0.t }) ?? -1
+    }
+
+    /// Truncate a sorted-by-t transcript to the longest contiguous prefix
+    /// — useful while transcription is still streaming, so users see lines
+    /// fill in linearly from the start rather than scattered across the
+    /// timeline as parallel VAD workers report out of order.
+    ///
+    /// Threshold tuning: 8s strikes the right line between two failure
+    /// modes —
+    ///   * Too generous (>20s): chunk-boundary gaps where workers haven't
+    ///     reported back yet slip through the filter, the user sees
+    ///     visible blank stretches inside the rendered transcript and
+    ///     it looks like sentences got skipped.
+    ///   * Too tight (<3s): real conversational pauses between turns
+    ///     (~3-6s is common when speakers switch) get cut off and the
+    ///     prefix stops short.
+    /// 8s catches everything past a natural pause; chunk gaps are
+    /// always 30s+ (default chunk size), so they fall well outside.
+    ///
+    /// If the prefix is artificially truncated by a still-decoding gap,
+    /// the cut content reappears once `transcribing == false` (caller
+    /// shows the full sorted list then).
+    private func contiguousPrefix(
+        of sorted: [TranscriptLineModel],
+        maxGapSeconds: Double = 8
+    ) -> [TranscriptLineModel] {
+        guard let first = sorted.first else { return [] }
+        // If the earliest emitted line is already deep into the audio
+        // (chunks 0..N haven't reported back, but chunk N+k has), don't
+        // render a "transcript" that secretly skips the opening minute.
+        // 45s buffer covers normal VAD-stripped intros without false
+        // positives on legit late starts.
+        if first.t > 45 { return [] }
+        var out: [TranscriptLineModel] = [first]
+        var prevT = first.t
+        for line in sorted.dropFirst() {
+            if line.t - prevT > maxGapSeconds { break }
+            out.append(line)
+            prevT = line.t
+        }
+        return out
     }
 
     // MARK: - AI Inspector
@@ -924,7 +1075,7 @@ struct EpisodeView: View {
                     .foregroundColor(Ink.tertiary)
                 Button {
                     if !summaryConfigured {
-                        store.view = .settings
+                        store.navigate(to: .settings)
                     } else {
                         runAnalysis(ep: ep, show: show)
                     }
@@ -983,7 +1134,7 @@ struct EpisodeView: View {
                     .foregroundColor(Ink.tertiary)
                 Button {
                     if !summaryConfigured {
-                        store.view = .settings
+                        store.navigate(to: .settings)
                     } else {
                         runAnalysis(ep: ep, show: show)
                     }
@@ -1025,24 +1176,37 @@ struct EpisodeView: View {
                 RoundedRectangle(cornerRadius: 10).fill(Color.black.opacity(0.04))
             )
 
-            FlowLayout(spacing: 6) {
-                ForEach(["What's the main argument?", "Summarize in one paragraph", "What are the surprising claims?"], id: \.self) { q in
-                    Button {
-                        askValue = q
-                        runAsk(ep: ep)
-                    } label: {
-                        Text(q)
-                            .font(.sans(12, weight: .medium))
-                            .foregroundColor(Ink.secondary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(
-                                Capsule().fill(Color.black.opacity(0.04))
-                                    .overlay(Capsule().stroke(Color.black.opacity(0.05), lineWidth: 1))
-                            )
+            if suggestionsLoading && suggestedQuestions.isEmpty {
+                // Skeleton chips while the first suggestion fetch lands —
+                // keeps the layout from jumping when results arrive.
+                FlowLayout(spacing: 6) {
+                    ForEach(0..<3, id: \.self) { _ in
+                        Capsule()
+                            .fill(Color.black.opacity(0.05))
+                            .frame(width: CGFloat.random(in: 120...190), height: 24)
+                            .redacted(reason: .placeholder)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(!canAsk(ep: ep))
+                }
+            } else {
+                FlowLayout(spacing: 6) {
+                    ForEach(currentSuggestions(ep: ep), id: \.self) { q in
+                        Button {
+                            askValue = q
+                            runAsk(ep: ep)
+                        } label: {
+                            Text(q)
+                                .font(.sans(12, weight: .medium))
+                                .foregroundColor(Ink.secondary)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(
+                                    Capsule().fill(Color.black.opacity(0.04))
+                                        .overlay(Capsule().stroke(Color.black.opacity(0.05), lineWidth: 1))
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!canAsk(ep: ep))
+                    }
                 }
             }
 
@@ -1100,6 +1264,12 @@ struct EpisodeView: View {
                     .foregroundColor(Danger.primary)
             }
         }
+        .onAppear { loadSuggestionsIfNeeded(ep: ep) }
+        // When the analysis output changes (summary lands, user re-runs
+        // analysis after editing transcript, etc.), refetch with the
+        // sharper grounding.
+        .onChange(of: ep.aiSummary) { _, _ in loadSuggestionsIfNeeded(ep: ep) }
+        .onChange(of: ep.aiTakeaways) { _, _ in loadSuggestionsIfNeeded(ep: ep) }
     }
 
     private func askPlaceholder(ep: Episode) -> String {
@@ -1137,10 +1307,14 @@ struct EpisodeView: View {
         if store.settings.transcribeEngine != "local" {
             if (store.settings.openaiKey ?? "").isEmpty {
                 store.toast("Add your OpenAI API key in Settings to transcribe")
-                store.view = .settings
+                store.navigate(to: .settings)
                 return
             }
         }
+        // Jump to the transcript tab so the user sees lines stream in
+        // as they're decoded — no need to manually switch over after
+        // pressing Transcribe. Retry from the error row also wants this.
+        tab = .transcript
         transcribes.startTranscribe(
             episode: ep,
             settings: store.settings,
@@ -1157,7 +1331,7 @@ struct EpisodeView: View {
     private func runAnalysis(ep: Episode, show: Show) {
         guard summaryConfigured else {
             store.toast("Add your \(summaryConfig.provider.displayName) key in Settings")
-            store.view = .settings
+            store.navigate(to: .settings)
             return
         }
         guard !ep.transcriptLines.isEmpty else {
@@ -1214,6 +1388,76 @@ struct EpisodeView: View {
                 askError = error.localizedDescription
             }
             askLoading = false
+        }
+    }
+
+    /// Stable identity for "the current state of suggestions" — episode id
+    /// plus a hash of the summary so we refetch once the analysis lands
+    /// (a richer set of questions), but don't keep refetching on every tab
+    /// switch when nothing has changed.
+    private func suggestionsKey(for ep: Episode) -> String {
+        let summaryHash = (ep.aiSummary ?? "").hashValue
+        let takeawaysHash = (ep.aiTakeaways ?? []).joined(separator: "|").hashValue
+        return "\(ep.id):\(summaryHash):\(takeawaysHash)"
+    }
+
+    /// Fallback suggestions for when the AI hasn't produced episode-specific
+    /// prompts yet (or AI is unconfigured). Translated to the current
+    /// app language.
+    private var fallbackSuggestions: [String] {
+        [
+            t("What's the main argument?", lang),
+            t("Summarize in one paragraph", lang),
+            t("What are the surprising claims?", lang)
+        ]
+    }
+
+    private func currentSuggestions(ep: Episode) -> [String] {
+        suggestedQuestions.isEmpty ? fallbackSuggestions : suggestedQuestions
+    }
+
+    /// Fetch content-aware suggestions when the user lands on the Ask tab
+    /// (or whenever the analysis output changes). Cheap to call repeatedly —
+    /// `suggestionsLoadedKey` short-circuits redundant work.
+    private func loadSuggestionsIfNeeded(ep: Episode) {
+        guard summaryConfigured, !ep.transcriptLines.isEmpty else { return }
+        let key = suggestionsKey(for: ep)
+        if suggestionsLoadedKey == key { return }
+        if suggestionsLoading { return }
+
+        // Optimistically mark this key as "in flight" so a second trigger
+        // (tab toggle, analysis completion racing) doesn't kick off twice.
+        suggestionsLoadedKey = key
+        suggestionsLoading = true
+        let cfg = summaryConfig
+        let texts = ep.sortedTranscriptLines.map { $0.text }
+        let summary = ep.aiSummary
+        let takeaways = ep.aiTakeaways ?? []
+        let showTitle = ep.show?.title ?? ""
+        let episodeTitle = ep.title
+
+        Task { @MainActor in
+            do {
+                let qs = try await AIService.suggestQuestions(
+                    transcript: texts,
+                    summary: summary,
+                    takeaways: takeaways,
+                    episodeTitle: episodeTitle,
+                    showTitle: showTitle,
+                    config: cfg
+                )
+                // Only swap in if the episode + analysis we requested for is
+                // still the relevant one (user could have navigated away).
+                if suggestionsLoadedKey == key {
+                    suggestedQuestions = qs
+                }
+            } catch {
+                // Silent fallback — the generic suggestions still render via
+                // `currentSuggestions`. Clearing the key allows a retry next
+                // time the user re-enters the tab.
+                if suggestionsLoadedKey == key { suggestionsLoadedKey = nil }
+            }
+            suggestionsLoading = false
         }
     }
 
@@ -1310,6 +1554,175 @@ struct DotPulse: View {
             .scaleEffect(scale)
             .animation(.easeInOut(duration: 1).repeatForever(autoreverses: true), value: scale)
             .onAppear { scale = 1.1 }
+    }
+}
+
+// MARK: - Transcription banner + skeleton
+
+/// Heads-up status pill while a transcribe job is running. Shows the
+/// current pipeline stage (fetching / loading model / transcribing /
+/// tagging speakers), a percentage, and a thin progress bar.
+/// Replaces the previous bare "STREAMING · whisper-1" text row.
+struct TranscribingBanner: View {
+    let stage: TranscribeJob.Stage
+    let progress: Double
+    let modelLabel: String
+    let accent: Color
+    @Environment(\.appLanguage) private var lang: AppLanguage
+    @State private var shimmerX: CGFloat = -200
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                DotPulse()
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(headline)
+                        .font(.mono(11, weight: .bold))
+                        .tracking(0.7)
+                        .foregroundColor(accent)
+                    Text(subtitle)
+                        .font(.sans(11))
+                        .foregroundColor(Ink.tertiary)
+                }
+                Spacer()
+                Text("\(Int(progress * 100))%")
+                    .font(.mono(11, weight: .semibold))
+                    .foregroundColor(Ink.secondary)
+                    .contentTransition(.numericText(value: progress))
+                    .animation(.easeOut(duration: 0.4), value: progress)
+            }
+
+            // Slim progress bar at the bottom of the banner. Acts as
+            // overflow channel for the percentage on the right — both
+            // show the same number, but visually one is a moving line.
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.black.opacity(0.06))
+                        .frame(height: 3)
+                    Capsule().fill(accent)
+                        .frame(width: max(0, geo.size.width * progress), height: 3)
+                        .animation(.easeOut(duration: 0.3), value: progress)
+                    // Sheen sweeping across the filled portion.
+                    Capsule()
+                        .fill(LinearGradient(
+                            colors: [.clear, .white.opacity(0.55), .clear],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        ))
+                        .frame(width: 80, height: 3)
+                        .offset(x: shimmerX)
+                        .mask(
+                            Capsule()
+                                .frame(width: max(0, geo.size.width * progress), height: 3)
+                        )
+                }
+            }
+            .frame(height: 3)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(accent.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(accent.opacity(0.15), lineWidth: 0.5)
+                )
+        )
+        .onAppear {
+            withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) {
+                shimmerX = 320
+            }
+        }
+    }
+
+    private var headline: String {
+        switch stage {
+        case .fetchingAudio:     return "FETCHING AUDIO"
+        case .loadingModel:      return "LOADING MODEL · \(modelLabel)"
+        case .downloadingModel:  return "DOWNLOADING MODEL · \(modelLabel)"
+        case .transcribing:      return "TRANSCRIBING · \(modelLabel)"
+        case .inferringSpeakers: return "TAGGING SPEAKERS"
+        case .finalizing:        return "FINALIZING"
+        }
+    }
+    private var subtitle: String {
+        switch stage {
+        case .fetchingAudio:
+            return t("Getting the audio file ready", lang)
+        case .loadingModel:
+            return t("Warming up the model — first run takes a moment", lang)
+        case .downloadingModel:
+            return t("Downloading the model from the network", lang)
+        case .transcribing:
+            return t("Decoding speech, line by line", lang)
+        case .inferringSpeakers:
+            return t("Asking the AI who said what", lang)
+        case .finalizing:
+            return t("Saving transcript", lang)
+        }
+    }
+}
+
+/// Skeleton row that mirrors `TranscriptRow`'s layout — time + speaker
+/// stub on the left, two rounded "text" bars on the right — with a
+/// continuous shimmer sweeping across to communicate "still working".
+struct TranscriptLineSkeleton: View {
+    @State private var phase: CGFloat = 0
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 18) {
+            VStack(alignment: .leading, spacing: 6) {
+                bar(width: 44, height: 9)
+                bar(width: 60, height: 9)
+            }
+            .frame(width: 110, alignment: .leading)
+            .padding(.leading, 8)
+
+            VStack(alignment: .leading, spacing: 7) {
+                bar(width: nil, height: 11)
+                bar(width: nil, height: 11, widthFraction: 0.72)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.trailing, 8)
+        }
+        .padding(.vertical, 12)
+        .opacity(0.85)
+        .onAppear {
+            withAnimation(.linear(duration: 1.6).repeatForever(autoreverses: false)) {
+                phase = 1
+            }
+        }
+    }
+
+    /// One shimmer bar. `width` pins an exact width (used for the
+    /// timestamp / speaker stubs); `widthFraction` makes the bar fill
+    /// a fraction of the available width (text lines, where we want
+    /// the second line to look slightly shorter than the first).
+    @ViewBuilder
+    private func bar(width: CGFloat?, height: CGFloat, widthFraction: CGFloat = 1.0) -> some View {
+        GeometryReader { geo in
+            let w = width ?? (geo.size.width * widthFraction)
+            ZStack {
+                RoundedRectangle(cornerRadius: height / 2, style: .continuous)
+                    .fill(Color.black.opacity(0.06))
+                RoundedRectangle(cornerRadius: height / 2, style: .continuous)
+                    .fill(LinearGradient(
+                        colors: [.clear,
+                                 Color.white.opacity(0.6),
+                                 .clear],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    ))
+                    .offset(x: -w + (2 * w) * phase)
+                    .mask(
+                        RoundedRectangle(cornerRadius: height / 2, style: .continuous)
+                    )
+            }
+            .frame(width: w, height: height)
+        }
+        .frame(width: width, height: height)
+        .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
     }
 }
 

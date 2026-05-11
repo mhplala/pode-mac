@@ -125,7 +125,7 @@ struct ListenNowView: View {
 
             HStack(spacing: 10) {
                 Button {
-                    store.view = .browse
+                    store.goTo(.browse)
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "globe")
@@ -134,7 +134,7 @@ struct ListenNowView: View {
                     }
                 }
                 .buttonStyle(PrimaryButtonStyle())
-                Button("Settings") { store.view = .settings }
+                Button("Settings") { store.goTo(.settings) }
                     .buttonStyle(GhostButtonStyle())
             }
         }
@@ -260,7 +260,7 @@ private struct FeaturedCard: View {
                         .buttonStyle(PrimaryButtonStyle())
 
                         Button("Open episode") {
-                            store.view = .episode(episode.id)
+                            store.navigate(to: .episode(episode.id))
                         }
                         .buttonStyle(GhostButtonStyle())
 
@@ -295,7 +295,7 @@ private struct InProgressCard: View {
     var body: some View {
         if let show = episode.show {
             Button {
-                store.view = .episode(episode.id)
+                store.navigate(to: .episode(episode.id))
             } label: {
                 HStack(spacing: 14) {
                     CoverView(artworkUrl: show.artworkUrl, title: show.title, size: 64, radius: 14)
@@ -372,7 +372,7 @@ struct EpisodeRow: View {
     var body: some View {
         if let show = episode.show {
             Button {
-                store.view = .episode(episode.id)
+                store.navigate(to: .episode(episode.id))
             } label: {
                 HStack(spacing: 12) {
                     if let i = index {
@@ -487,7 +487,7 @@ private struct ShowTile: View {
 
     var body: some View {
         Button {
-            store.view = .show(show.id)
+            store.navigate(to: .show(show.id))
         } label: {
             VStack(alignment: .leading, spacing: 0) {
                 CoverView(artworkUrl: show.artworkUrl, title: show.title,
@@ -529,7 +529,7 @@ struct QueueRow: View {
     var body: some View {
         if let show = episode.show {
             Button {
-                store.view = .episode(episode.id)
+                store.navigate(to: .episode(episode.id))
             } label: {
                 HStack(spacing: 12) {
                     Text(String(format: "%02d", index))

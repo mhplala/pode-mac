@@ -13,7 +13,16 @@ struct AppSettings: Codable, Equatable {
     /// "local" (WhisperKit on-device) or "openai" (cloud).
     var transcribeEngine: String = "local"
     /// Persisted as `LocalWhisperModel.rawValue`; default Balanced.
-    var localWhisperModel: String = "openai_whisper-medium"
+    /// Default to large-v3-turbo: best quality among our presets, and
+    /// thanks to its 4-layer decoder it's also faster than medium on
+    /// modern Apple Silicon. Costs ~1 GB on disk one time.
+    ///
+    /// Note: the variant name carries the `v20240930` date because
+    /// that's the exact identifier WhisperKit's HuggingFace repo uses
+    /// (`argmaxinc/whisperkit-coreml`). A bare `openai_whisper-large-
+    /// v3-turbo` looks reasonable but fails to download — the repo
+    /// doesn't have that folder.
+    var localWhisperModel: String = "openai_whisper-large-v3-v20240930_turbo"
     /// Have we completed the first-run model picker for the local engine?
     var localWhisperPicked: Bool = false
     /// Use the configured AI provider to infer speaker labels after transcribing.

@@ -404,7 +404,7 @@ final class TranscribeStore {
         settings: AppSettings, ctx: ModelContext, jobID: String,
         centerId: UUID, toast: @escaping (String) -> Void
     ) async throws {
-        let modelChoice = LocalWhisperModel(rawValue: settings.localWhisperModel) ?? .balanced
+        let modelChoice = LocalWhisperModel(rawValue: settings.localWhisperModel) ?? .highest
         let dur = max(episode.duration, 1)
         let lang = settings.transcribeLanguage.isEmpty ? nil : settings.transcribeLanguage
 
@@ -413,72 +413,153 @@ final class TranscribeStore {
         episode.transcribed = false
         try? ctx.save()
 
-        let result = try await LocalWhisperService.shared.transcribe(
-            audioFileURL: audioURL,
-            model: modelChoice,
-            language: lang,
-            audioDuration: dur,
-            onStage: { [weak self] stage in
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    switch stage {
-                    case .checking:
-                        self.update(jobID) {
-                            $0.stage = .loadingModel; $0.stageProgress = 0
+        // Streaming state. Lives across the onSegment callbacks below.
+        // Dedup keys are `(seek, startMillis)` — `seek` alone is shared
+        // by every segment within a chunk, so using it as a unique key
+        // would silently drop all-but-one segment per chunk (the original
+        // streaming bug). `(seek, startMillis)` is unique per segment.
+        // `episodeID` is captured separately so async hops back to
+        // MainActor don't need to retain the Episode.
+        struct SegmentKey: Hashable { let seek: Int; let startMillis: Int }
+        let episodeID = episode.id
+        let seenLock = NSLock()
+        nonisolated(unsafe) var seenKeys: Set<SegmentKey> = []
+
+        let result: WhisperResult
+        do {
+            result = try await LocalWhisperService.shared.transcribe(
+                audioFileURL: audioURL,
+                model: modelChoice,
+                language: lang,
+                audioDuration: dur,
+                onStage: { [weak self] stage in
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        switch stage {
+                        case .checking:
+                            self.update(jobID) {
+                                $0.stage = .loadingModel; $0.stageProgress = 0
+                            }
+                            TaskCenter.shared.setSubtitle(centerId, "Checking model…")
+                        case .downloadingModel(let p):
+                            self.update(jobID) {
+                                $0.stage = .downloadingModel; $0.stageProgress = p
+                            }
+                            TaskCenter.shared.setProgress(
+                                centerId,
+                                TranscribeJob(stage: .downloadingModel, stageProgress: p).overall,
+                                subtitle: "Downloading model · \(Int(p * 100))%"
+                            )
+                        case .loadingModel:
+                            self.update(jobID) {
+                                $0.stage = .loadingModel; $0.stageProgress = 1
+                            }
+                            TaskCenter.shared.setSubtitle(centerId, "Loading model…")
+                        case .transcribing(let p):
+                            self.update(jobID) {
+                                $0.stage = .transcribing; $0.stageProgress = p
+                            }
+                            TaskCenter.shared.setProgress(
+                                centerId,
+                                TranscribeJob(stage: .transcribing, stageProgress: p).overall,
+                                subtitle: "Transcribing · \(Int(p * 100))%"
+                            )
                         }
-                        TaskCenter.shared.setSubtitle(centerId, "Checking model…")
-                    case .downloadingModel(let p):
-                        self.update(jobID) {
-                            $0.stage = .downloadingModel; $0.stageProgress = p
+                    }
+                },
+                onSegment: { segments in
+                    // Filter to segments we haven't seen yet. Compound
+                    // key (seek + start) is unique per segment; using
+                    // seek alone collapses chunks.
+                    let fresh: [StreamingSegment] = {
+                        seenLock.lock(); defer { seenLock.unlock() }
+                        var out: [StreamingSegment] = []
+                        for s in segments {
+                            let key = SegmentKey(seek: s.seek,
+                                                 startMillis: Int(s.start * 1000))
+                            if seenKeys.insert(key).inserted {
+                                out.append(s)
+                            }
                         }
-                        TaskCenter.shared.setProgress(
-                            centerId,
-                            TranscribeJob(stage: .downloadingModel, stageProgress: p).overall,
-                            subtitle: "Downloading model · \(Int(p * 100))%"
-                        )
-                    case .loadingModel:
-                        self.update(jobID) {
-                            $0.stage = .loadingModel; $0.stageProgress = 1
-                        }
-                        TaskCenter.shared.setSubtitle(centerId, "Loading model…")
-                    case .transcribing(let p):
-                        self.update(jobID) {
-                            $0.stage = .transcribing; $0.stageProgress = p
-                        }
-                        TaskCenter.shared.setProgress(
-                            centerId,
-                            TranscribeJob(stage: .transcribing, stageProgress: p).overall,
-                            subtitle: "Transcribing · \(Int(p * 100))%"
+                        return out
+                    }()
+                    guard !fresh.isEmpty else { return }
+
+                    // Insert via the same ctx that owns the Episode. The
+                    // outer @MainActor wrapper guarantees we're on the
+                    // right actor for SwiftData. `lineIndex` is no longer
+                    // a sort key (display sorts by t) — we just need it
+                    // unique per row for SwiftUI ForEach identity. The
+                    // (seek, startMillis) composite hashed into an Int
+                    // gives us that.
+                    let toInsert = fresh.map { seg -> TranscriptLineModel in
+                        let text = settings.simplifiedChinese
+                            ? Fmt.toSimplifiedChinese(seg.text) : seg.text
+                        let lineId = seg.seek &* 10_000 &+ Int(seg.start * 1000)
+                        return TranscriptLineModel(
+                            t: seg.t, text: text, speaker: nil,
+                            lineIndex: lineId
                         )
                     }
+                    // Refetch episode by ID inside the ctx to avoid
+                    // dangling-reference issues across actor hops.
+                    let descriptor = FetchDescriptor<Episode>(
+                        predicate: #Predicate<Episode> { $0.id == episodeID }
+                    )
+                    guard let ep = try? ctx.fetch(descriptor).first else { return }
+                    for line in toInsert {
+                        line.episode = ep
+                        ctx.insert(line)
+                    }
+                    try? ctx.save()
                 }
-            }
+            )
+        } catch {
+            // Cancellation or pipeline failure: wipe any streamed lines
+            // so the episode doesn't end up in a half-transcribed state
+            // (`transcribed=false` but rows present).
+            for line in episode.transcriptLines { ctx.delete(line) }
+            try? ctx.save()
+            throw error
+        }
+
+        // Safety-net reconciliation. The stream is our PRIMARY source,
+        // but WhisperKit's final `result.lines` is the canonical list
+        // (post-`updateSeekOffsetsForResults`, post-merge). Walk the
+        // final list and insert any line that's missing from what we
+        // streamed — guards against onSegment misses (callback
+        // ordering, late-arriving post-merge segments, etc).
+        reconcileWithFinalResult(
+            episode: episode, finalLines: result.lines,
+            settings: settings, ctx: ctx
         )
 
-        // Insert from the final result (timestamps are absolute).
-        var lineBuffer: [(idx: Int, text: String)] = []
-        for (idx, line) in result.lines.enumerated() {
-            let text = settings.simplifiedChinese
-                ? Fmt.toSimplifiedChinese(line.text) : line.text
-            let m = TranscriptLineModel(t: line.t, text: text, speaker: nil, lineIndex: idx)
-            m.episode = episode
-            ctx.insert(m)
-            lineBuffer.append((idx, text))
-        }
+        // Light cleanup before flipping `transcribed = true`: drop
+        // adjacent same-text lines (chunk-boundary duplicates that
+        // sneak through both stream + reconcile passes).
+        cleanupAfterStream(episode: episode, ctx: ctx)
+
         episode.transcribed = true
         episode.transcribedAt = .now
         try? ctx.save()
 
+        let lineCount = episode.transcriptLines.count
+
         // Optional: speaker inference via the configured AI provider.
+        // Decoupled from `lineIndex` — uses sorted-by-t position so
+        // streaming's seek-based lineIndex doesn't poison the lookup.
         let aiConfig = AIClientConfig(settings: settings)
         let aiReady = !aiConfig.apiKey.isEmpty && !aiConfig.model.isEmpty
         if settings.inferSpeakers, aiReady,
-           let show = episode.show, !lineBuffer.isEmpty {
+           let show = episode.show, lineCount > 0 {
             update(jobID) {
                 $0.stage = .inferringSpeakers; $0.stageProgress = 0
             }
             TaskCenter.shared.setSubtitle(centerId, "Tagging speakers…")
-            let pairs = lineBuffer.map { (index: $0.idx, text: $0.text) }
+            let sorted = episode.transcriptLines.sorted { $0.t < $1.t }
+            let pairs = sorted.enumerated().map { (idx, line) in
+                (index: idx, text: line.text)
+            }
             do {
                 let assignments = try await AIService.inferSpeakers(
                     lines: pairs,
@@ -487,8 +568,9 @@ final class TranscribeStore {
                     episodeTitle: episode.title,
                     config: aiConfig
                 )
-                for line in episode.transcriptLines {
-                    if let s = assignments[line.lineIndex] { line.speaker = s }
+                // Apply by position in the same sorted array we sent.
+                for (idx, line) in sorted.enumerated() {
+                    if let s = assignments[idx] { line.speaker = s }
                 }
                 try? ctx.save()
                 update(jobID) {
@@ -497,23 +579,87 @@ final class TranscribeStore {
                 let count = Set(assignments.values).count
                 TaskCenter.shared.succeed(
                     centerId,
-                    subtitle: "Done · \(lineBuffer.count) lines · \(count) speakers"
+                    subtitle: "Done · \(lineCount) lines · \(count) speakers"
                 )
-                toast("Transcribed · \(lineBuffer.count) lines · \(count) speakers")
+                toast("Transcribed · \(lineCount) lines · \(count) speakers")
             } catch {
                 // Speaker inference is best-effort.
                 TaskCenter.shared.succeed(
                     centerId,
-                    subtitle: "Done · \(lineBuffer.count) lines (speakers skipped)"
+                    subtitle: "Done · \(lineCount) lines (speakers skipped)"
                 )
-                toast("Transcribed · \(lineBuffer.count) lines")
+                toast("Transcribed · \(lineCount) lines")
             }
         } else {
-            TaskCenter.shared.succeed(centerId, subtitle: "Done · \(lineBuffer.count) lines")
-            toast("Transcribed · \(lineBuffer.count) lines")
+            TaskCenter.shared.succeed(centerId, subtitle: "Done · \(lineCount) lines")
+            toast("Transcribed · \(lineCount) lines")
         }
 
         update(jobID) { $0.stage = .finalizing; $0.stageProgress = 1 }
+    }
+
+    /// Post-stream cleanup. Streaming is the source of truth for content,
+    /// but the VAD pipeline can emit two segments with identical text at a
+    /// chunk boundary (one from each side). Sort by t, drop the second of
+    /// any adjacent same-text pair.
+    private func cleanupAfterStream(episode: Episode, ctx: ModelContext) {
+        let sorted = episode.transcriptLines.sorted { $0.t < $1.t }
+        var prevText: String? = nil
+        for line in sorted {
+            if let pt = prevText, pt == line.text {
+                ctx.delete(line)
+                continue
+            }
+            prevText = line.text
+        }
+    }
+
+    /// Safety net for the streaming path. WhisperKit's final return is
+    /// the canonical transcript — post-merge, post-offset-adjust. If a
+    /// segment never reached our `onSegment` callback (rare but
+    /// possible: callback throttling, late post-processing inserts),
+    /// we still want it in the saved transcript.
+    ///
+    /// Match policy: for each line in `finalLines`, check whether
+    /// there's already a saved TranscriptLineModel within ±0.5s. If
+    /// not, insert it. Tolerance of 0.5s absorbs the small precision
+    /// difference between streamed t (`seek/sampleRate + start`) and
+    /// final t (`floor(absolute_start)`), without merging legitimate
+    /// adjacent sentences that happen to be close.
+    private func reconcileWithFinalResult(
+        episode: Episode,
+        finalLines: [WhisperLine],
+        settings: AppSettings,
+        ctx: ModelContext
+    ) {
+        // Sort existing once; binary-search-friendly enough for the
+        // common case (a few hundred to ~2000 lines).
+        let existing = episode.transcriptLines.sorted { $0.t < $1.t }
+        let tolerance: Double = 0.5
+        var inserted = 0
+        // Reconciled rows get a high-offset lineIndex so they can't
+        // collide with streamed rows (whose lineIndex uses the
+        // seek-based formula yielding values up to ~10^11 for very
+        // long episodes). 10^13 is comfortably above that ceiling.
+        let reconcileBase = 10_000_000_000_000
+        for (idx, line) in finalLines.enumerated() {
+            // O(log n) reach for the nearest existing t. Linear scan is
+            // fine here — finalLines is small (~few hundred).
+            let hasNear = existing.contains { abs($0.t - line.t) <= tolerance }
+            if hasNear { continue }
+            let text = settings.simplifiedChinese
+                ? Fmt.toSimplifiedChinese(line.text) : line.text
+            let m = TranscriptLineModel(
+                t: line.t, text: text, speaker: line.speaker,
+                lineIndex: reconcileBase + idx
+            )
+            m.episode = episode
+            ctx.insert(m)
+            inserted += 1
+        }
+        if inserted > 0 {
+            try? ctx.save()
+        }
     }
 
     private func update(_ id: String, mutate: (inout TranscribeJob) -> Void) {

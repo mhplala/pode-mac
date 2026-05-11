@@ -127,7 +127,7 @@ struct SearchView: View {
                   spacing: 18) {
             ForEach(matchedShows) { show in
                 Button {
-                    store.view = .show(show.id)
+                    store.navigate(to: .show(show.id))
                 } label: {
                     VStack(alignment: .leading, spacing: 8) {
                         CoverView(artworkUrl: show.artworkUrl, title: show.title,
@@ -175,7 +175,7 @@ struct SearchView: View {
             ForEach(matchedHighlights) { h in
                 Button {
                     if let ep = h.episode {
-                        store.view = .episode(ep.id)
+                        store.navigate(to: .episode(ep.id))
                     }
                 } label: {
                     HStack(alignment: .top, spacing: 12) {
@@ -222,7 +222,7 @@ struct SearchView: View {
             ForEach(matchedLines, id: \.persistentModelID) { line in
                 Button {
                     if let ep = line.episode {
-                        store.view = .episode(ep.id)
+                        store.navigate(to: .episode(ep.id))
                     }
                 } label: {
                     HStack(alignment: .top, spacing: 12) {
@@ -272,7 +272,7 @@ struct SearchView: View {
             // simplest: stash the query in the AppStore's `search` (already
             // there) and switch to .browse. BrowseView can pick it up on
             // appear.
-            store.view = .browse
+            store.goTo(.browse)
             NotificationCenter.default.post(
                 name: .runiTunesSearch,
                 object: nil,

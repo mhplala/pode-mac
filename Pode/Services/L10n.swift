@@ -217,6 +217,13 @@ enum L10n {
         "All":           "全部",
         "Loading…":      "加载中…",
         "Loading episodes…":      "加载单集中…",
+        "More lines decoding…":   "更多字幕解码中…",
+        "Getting the audio file ready":       "正在准备音频文件",
+        "Warming up the model — first run takes a moment": "正在加载模型 —— 首次运行需要片刻",
+        "Downloading the model from the network": "正在从网络下载模型",
+        "Decoding speech, line by line":      "正在逐句解码",
+        "Asking the AI who said what":        "正在请 AI 标注说话人",
+        "Saving transcript":                  "正在保存字幕",
         "No episodes in this feed yet.": "这个 RSS 还没有单集。",
         "Clear":         "清除",
 

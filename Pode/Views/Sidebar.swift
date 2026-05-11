@@ -102,7 +102,7 @@ struct Sidebar: View {
                     EyebrowText(text: L10n.t("Shows", language: lang).uppercased())
                     Spacer()
                     Button {
-                        store.view = .browse
+                        store.goTo(.browse)
                     } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 10, weight: .medium))
@@ -170,7 +170,7 @@ struct Sidebar: View {
                         .foregroundColor(Ink.tertiary)
                 }
                 Spacer()
-                Button { store.view = .settings } label: {
+                Button { store.goTo(.settings) } label: {
                     Image(systemName: "gearshape")
                         .font(.system(size: 11))
                         .foregroundColor(Ink.secondary)
@@ -220,7 +220,10 @@ private struct NavRow: View {
 
     var body: some View {
         Button {
-            store.view = view
+            // Sidebar nav = top-level destination. Clear back history
+            // so Back from anywhere drilled-down off this root doesn't
+            // bounce across roots.
+            store.goTo(view)
         } label: {
             HStack(spacing: 11) {
                 // Fixed-width icon frame so labels start at the same x across
@@ -274,7 +277,11 @@ private struct ShowRow: View {
 
     var body: some View {
         Button {
-            store.view = .show(show.id)
+            // Sidebar show entries are like sidebar root nav — treat as
+            // a fresh destination, not a drill-down. Back from a
+            // sub-page should land here, not whatever non-related place
+            // the user was in before.
+            store.goTo(.show(show.id))
         } label: {
             HStack(spacing: 10) {
                 CoverView(artworkUrl: show.artworkUrl, title: show.title, size: 26, radius: 5)
