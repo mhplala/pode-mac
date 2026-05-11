@@ -19,7 +19,7 @@ const ZH = {
     "hero.title.before":      "听播客，",
     "hero.title.em":          "在场",
     "hero.title.after":       "。",
-    "hero.sub":               "有些单集只是背景噪音，有些会真的改变你怎么想问题。Pode 是为后一种做的 —— 听过的每一句都有字幕，在意的每一行都能找回来。",
+    "hero.sub":               "给那些你想真的记住的播客单集做的 Mac 应用。每一集都完整转录。你保存过的每一行，时间轴上都有书签。没有别的东西在抢你的注意力。",
     "hero.cta.primary":       "下载 Mac 版",
     "hero.req":               "macOS 14 及以上 · Apple Silicon · 免费",
 
@@ -38,13 +38,13 @@ const ZH = {
 
     // Manifesto
     "manifesto.eyebrow":      "我们为什么做这个",
-    "manifesto.body":         "大部分播客应用把单集当内容 —— 可以消费、可以统计分钟数、可以划过去。Pode 把它当阅读看待。完整字幕给你，触动你的句子可以标，过几天可以回来再看。界面剩下的部分，安静地让位。",
+    "manifesto.body":         "做 Pode 是因为，我用过的播客应用都没办法让我「重读」什么。这里每一集都有字幕，每一行都能搜，你保存的句子会作为书签落在时间轴上。大概就这样。",
 
     // Story 1 — transcription
     "story.t.eyebrow":        "每一句，都留下",
     "story.t.title.em":       "每一句话",
     "story.t.title.after":    "，落成文字。",
-    "story.t.body":           "三个小时的对话里，最打动你的那句很少在你以为的时间点。Pode 给每一集生成完整字幕 —— 本地在你的 Mac 上跑，或者用你自己的 AI key —— 让你想回去找的那一刻，可搜索、可引用、就在你离开的地方等着。",
+    "story.t.body":           "Pode 给每一集都做完整字幕 —— 在你 Mac 上本地跑（WhisperKit），或者用你自己的 OpenAI key。然后你可以全局搜索、跳到某一行，或者把想发给朋友的那一段直接复制走。",
     "feat.transcribe.stage":  "转录中 · 47%",
 
     // Story 2 — highlights
@@ -52,8 +52,8 @@ const ZH = {
     "story.h.title.before":   "留得下来的",
     "story.h.title.em":       "句子",
     "story.h.title.after":    "。",
-    "story.h.body":           "右键任意字幕行就能保存。高亮以书签的形式落在时间轴上，慢慢汇成你的私人 canon —— 一张安静的想法地图，画的是你自己听到的东西，不是别人的算法。",
-    "story.h.quote":          "改变你的不是答案 —— 是你意识到问题本身错了的那个瞬间。",
+    "story.h.body":           "右键字幕里任意一行就能保存。你的高亮在时间轴上以书签出现，也整理在专门的「高亮」tab 里 —— 你听到的句子，你自己的合集。",
+    "story.h.quote":          "做出第一版的那一刻，对问题的理解就完全变了。在那之前你以为知道的一切，其实都只是猜测。",
     "story.h.quote.attr":     "— 聊聊 Agent、边界、与注意力 · 00:42:18",
     "story.h.chip1":          "Language Agent",
     "story.h.chip2":          "第一性原理",
@@ -65,7 +65,7 @@ const ZH = {
     "story.q.title.before":   "一个真正",
     "story.q.title.em":       "听你的",
     "story.q.title.after":    "队列。",
-    "story.q.body":           "点播任意一集，它就插到最前 —— 今晚剩下的时间排在后面。拖拽换序。订阅一档节目，它的新单集会自动落进队列。顺序由你定。",
+    "story.q.body":           "点播任意一集，它就插到队列最前。拖拽换序。订阅的节目出新一集会自动落进队列 —— 中间没有推荐 feed 挡着。",
     "feat.queue.now":         "正在播放",
     "feat.queue.up1":         "库克的道德锚点",
     "feat.queue.up2":         "十字路口：蔡康永",
@@ -75,15 +75,15 @@ const ZH = {
     "story.i.title.before":   "让路的",
     "story.i.title.em":       "界面",
     "story.i.title.after":    "。",
-    "story.i.body":           "界面是故意安静的。没有广告。不追踪。没有滚动 feed 把你拽到下一首。你耳朵里的声音，不用跟屏幕上的东西争抢。",
-    "story.i.tail":           "想用 AI 摘要的时候随时开 —— 用你自己的 key（Claude、GPT、Gemini，或任何 OpenAI 兼容服务）。Key 不会离开你的 Mac。",
+    "story.i.body":           "没有广告。不追踪。不订阅。你和节目之间没有推荐 feed。",
+    "story.i.tail":           "想用 AI 摘要的时候随时开。粘上你自己的 API key —— Claude、GPT、Gemini，或者任何 OpenAI 兼容服务都行。Key 留在你的 Mac 上。",
     "story.i.pillTitle":      "聊聊 Agent、边界、与注意力",
 
     // CTA
     "cta.eyebrow":            "准备好了？",
     "cta.title.em":           "免费",
     "cta.title.after":        "。本地。属于你。",
-    "cta.sub":                "一个失控了的周末项目。一个人做的，给那些还会把长对话从头听到尾的人。",
+    "cta.sub":                "独立 Mac 应用。无需账号，不订阅，没有套路。",
     "cta.btn":                "下载 Pode 0.3.0",
     "cta.req":                "macOS 14 及以上 · Apple Silicon",
 
