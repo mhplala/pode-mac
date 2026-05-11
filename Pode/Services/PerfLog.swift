@@ -4,32 +4,31 @@ import os
 /// In-app live performance counters + HUD. Designed for debugging the
 /// "why is playback laggy" class of issue without an Instruments trace.
 ///
-/// Bump counters from the relevant call sites:
-///   PerfCounters.shared.bodyEval()          // EpisodeView body re-eval
-///   PerfCounters.shared.dockEval()          // ScrubberRow body re-eval
-///   PerfCounters.shared.tick()              // player.currentTime onChange
-///   PerfCounters.shared.scrollFired()       // auto-scrollTo invocation
-///   PerfCounters.shared.activeLineChanged() // activeLineIdx flipped
-///
-/// `PerfHUD()` overlays them on the screen. Each window is 1 second.
+/// **Critical**: `PerfCounters` is a plain class (NOT @Observable). It's
+/// safe to call its `bodyEval()` / `dockEval()` from inside a SwiftUI
+/// view body because none of its writes are observed by SwiftUI — they
+/// only flow through `PerfHUD`'s own @State via a Timer poll. An earlier
+/// version made the counters @Observable, which caused SwiftUI to
+/// detect mid-body state mutation, refuse to settle the dependency
+/// graph, and freeze the entire EpisodeView at "loading…".
 @MainActor
-@Observable
 final class PerfCounters {
     static let shared = PerfCounters()
 
-    // Per-1s normalized snapshots (events per second).
-    var bodyEvalsPerSec: Int = 0
-    var dockEvalsPerSec: Int = 0
-    var ticksPerSec: Int = 0
-    var scrollsPerSec: Int = 0
-    var activeLineChangesPerSec: Int = 0
+    // Per-1s normalized snapshots (events per second). Written by
+    // `flushIfDue`, read by `PerfHUD` via Timer poll — never observed
+    // by SwiftUI directly.
+    private(set) var bodyEvalsPerSec: Int = 0
+    private(set) var dockEvalsPerSec: Int = 0
+    private(set) var ticksPerSec: Int = 0
+    private(set) var scrollsPerSec: Int = 0
+    private(set) var activeLineChangesPerSec: Int = 0
 
-    /// Total counters since launch — useful for sanity-checking trends.
-    var totalBodyEvals: Int = 0
-    var totalDockEvals: Int = 0
-    var totalScrolls: Int = 0
+    private(set) var totalBodyEvals: Int = 0
+    private(set) var totalDockEvals: Int = 0
+    private(set) var totalScrolls: Int = 0
 
-    // Running counts in the current window
+    // Running counts in the current 1s window
     private var bodyEvals = 0
     private var dockEvals = 0
     private var ticks = 0
@@ -50,9 +49,6 @@ final class PerfCounters {
         let now = Date()
         let elapsed = now.timeIntervalSince(windowStart)
         guard elapsed >= 1.0 else { return }
-        // Normalize to events/sec — if the user backgrounded the app
-        // for 3 seconds the count would otherwise look artificially
-        // small in the resumed window.
         let factor = 1.0 / elapsed
         bodyEvalsPerSec        = Int((Double(bodyEvals)        * factor).rounded())
         dockEvalsPerSec        = Int((Double(dockEvals)        * factor).rounded())
@@ -71,18 +67,28 @@ final class PerfCounters {
     }
 }
 
-/// Compact monospace HUD that lives in the top-right of EpisodeView (or
-/// wherever you attach it). Updates once per second.
+/// Compact monospace HUD overlaid on EpisodeView. Polls
+/// `PerfCounters.shared` every 0.5s via Timer — does NOT bind to it
+/// directly. That keeps the counter writes (which happen inside view
+/// bodies) totally invisible to SwiftUI's dependency graph; only this
+/// HUD's local @State drives any re-render, and it changes at a
+/// throttled, predictable rate.
 struct PerfHUD: View {
-    @Bindable private var c = PerfCounters.shared
+    @State private var bodyVal: Int = 0
+    @State private var dockVal: Int = 0
+    @State private var tickVal: Int = 0
+    @State private var scrollVal: Int = 0
+    @State private var lineVal: Int = 0
+
+    private let tick = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            row("body",   c.bodyEvalsPerSec,        warnAt: 10)
-            row("dock",   c.dockEvalsPerSec,        warnAt: 5)
-            row("tick",   c.ticksPerSec,            warnAt: 4)
-            row("scroll", c.scrollsPerSec,          warnAt: 2)
-            row("line",   c.activeLineChangesPerSec, warnAt: 6)
+            row("body",   bodyVal,   warnAt: 10)
+            row("dock",   dockVal,   warnAt: 5)
+            row("tick",   tickVal,   warnAt: 4)
+            row("scroll", scrollVal, warnAt: 2)
+            row("line",   lineVal,   warnAt: 6)
         }
         .font(.system(size: 10, weight: .medium, design: .monospaced))
         .foregroundColor(.white)
@@ -92,12 +98,20 @@ struct PerfHUD: View {
             RoundedRectangle(cornerRadius: 6)
                 .fill(Color.black.opacity(0.62))
         )
-        .allowsHitTesting(false)   // never block the UI underneath
+        .allowsHitTesting(false)
+        .onReceive(tick) { _ in
+            // Pull the latest snapshot. Writing to @State here is safe
+            // because it's a side effect of a Combine publisher, not a
+            // mid-body mutation.
+            let c = PerfCounters.shared
+            if bodyVal   != c.bodyEvalsPerSec        { bodyVal   = c.bodyEvalsPerSec }
+            if dockVal   != c.dockEvalsPerSec        { dockVal   = c.dockEvalsPerSec }
+            if tickVal   != c.ticksPerSec            { tickVal   = c.ticksPerSec }
+            if scrollVal != c.scrollsPerSec          { scrollVal = c.scrollsPerSec }
+            if lineVal   != c.activeLineChangesPerSec { lineVal   = c.activeLineChangesPerSec }
+        }
     }
 
-    /// Each row colors red when above its warn threshold — so a glance
-    /// at the HUD during a laggy moment immediately surfaces which
-    /// metric spiked.
     private func row(_ label: String, _ value: Int, warnAt: Int) -> some View {
         HStack(spacing: 8) {
             Text(label)
