@@ -11,8 +11,8 @@ settings:
     CODE_SIGN_IDENTITY: "-"
     CODE_SIGN_STYLE: Automatic
     ENABLE_HARDENED_RUNTIME: YES
-    MARKETING_VERSION: "0.5.12"
-    CURRENT_PROJECT_VERSION: "17"
+    MARKETING_VERSION: "0.5.13"
+    CURRENT_PROJECT_VERSION: "18"
 packages:
   WhisperKit:
     url: https://github.com/argmaxinc/WhisperKit

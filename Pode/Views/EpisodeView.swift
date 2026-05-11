@@ -69,21 +69,15 @@ struct EpisodeView: View {
     /// animations inside the ScrollView.
     @State private var lastScrollAt: Date = .distantPast
 
-    /// Detects user scrolling. `.scrollPosition(id:)` binds the
-    /// currently-anchored row id. We compare against the row we LAST
-    /// programmatically scrolled to: if they diverge outside our own
-    /// animation settling window, the user moved the ScrollView and
-    /// we should stop yanking them back to the playhead.
-    @State private var observedAnchor: Int? = nil
-    /// Timestamp of our last programmatic scrollTo. `observedAnchor`
-    /// changes during the ~300-500ms animation that follows — those
-    /// changes are NOT user-driven, so we ignore anchor diffs within
-    /// this settling window.
-    @State private var lastProgrammaticScrollAt: Date = .distantPast
-    /// When the user last manually scrolled. While `now - this < 5s`
-    /// we suppress auto-scroll entirely so the user can read where
-    /// they scrolled to.
-    @State private var userScrolledAt: Date = .distantPast
+    /// Transient scroll-detection state. Lives in a plain class (NOT
+    /// @State / @Observable) on purpose: `.scrollPosition(id:)` writes
+    /// the anchor every time a row crosses the center, which on a
+    /// 2400-line transcript fires 20+ times per second during a user
+    /// scroll gesture. If those writes hit @State, the entire
+    /// EpisodeView body invalidates 20×/sec and we crush the main
+    /// thread re-diffing 2400 LazyVStack children. A plain class is
+    /// invisible to SwiftUI tracking — same data, zero invalidation.
+    @State private var scrollState = TranscriptScrollState()
 
     init(episodeId: String) {
         self.episodeId = episodeId
@@ -836,12 +830,30 @@ struct EpisodeView: View {
             // user-driven scrolls from our own proxy.scrollTo settling.
             .scrollTargetLayout()
         }
-        // Two-way binding of "which row id is at the center anchor".
-        // We only READ from this — we never write to it (programmatic
-        // scrolling stays on proxy.scrollTo so we control timing /
-        // animation). When it changes outside our scroll settling
-        // window, the user moved the ScrollView themselves.
-        .scrollPosition(id: $observedAnchor, anchor: .center)
+        // Bind .scrollPosition through a manual Binding that targets
+        // our plain TranscriptScrollState class. The setter mutates
+        // the class directly (NOT @State), so SwiftUI doesn't
+        // invalidate EpisodeView body on every row-crossing — which
+        // would otherwise fire 20+ times/sec during a user scroll
+        // gesture and choke the main thread on a 2400-row ForEach.
+        //
+        // User-scroll detection happens inline in the setter: if the
+        // anchor change isn't inside our programmatic-scroll settling
+        // window, stamp `userScrolledAt`. `performAutoScroll` reads
+        // that to suppress auto-scroll for 5s after.
+        .scrollPosition(
+            id: Binding(
+                get: { scrollState.observedAnchor },
+                set: { newValue in
+                    scrollState.observedAnchor = newValue
+                    let now = Date()
+                    if now.timeIntervalSince(scrollState.lastProgrammaticScrollAt) >= 0.9 {
+                        scrollState.userScrolledAt = now
+                    }
+                }
+            ),
+            anchor: .center
+        )
         // Cache refresh triggers. The cache is the ONLY sorted list we
         // build; body never sorts.
         //   - count change: persist phase inserted/deleted rows.
@@ -874,22 +886,10 @@ struct EpisodeView: View {
             // Active line changed → fire one throttled scroll.
             performAutoScroll(proxy: proxy, ep: ep)
         }
-        // User-scroll detection. `observedAnchor` changes for two
-        // reasons: (a) our own proxy.scrollTo animation settling
-        // (ignored — `lastProgrammaticScrollAt` was just set), or
-        // (b) the user moved the ScrollView themselves. The latter
-        // stamps `userScrolledAt`, which suppresses auto-scroll for
-        // 5 seconds so they can read where they scrolled to.
-        .onChange(of: observedAnchor) { _, _ in
-            let now = Date()
-            // Wider window than the animation itself (0.55s) — anchor
-            // changes can ripple a beat after the animation visually
-            // ends as ScrollView's layout settles.
-            if now.timeIntervalSince(lastProgrammaticScrollAt) < 0.9 {
-                return
-            }
-            userScrolledAt = now
-        }
+        // (User-scroll detection happens inline in the .scrollPosition
+        // Binding setter above — it mutates the plain
+        // TranscriptScrollState class so SwiftUI doesn't invalidate
+        // the body 20+ times/sec during a scroll gesture.)
         // Fill the remaining height inside the parent tabsCard. The
         // tabsCard outer locks to `tabContentHeight`; this inner pane
         // soaks up whatever's left after the tab strip.
@@ -949,14 +949,14 @@ struct EpisodeView: View {
         // 1. Animation-throttle: don't fire faster than the animation
         //    itself can finish. Throttle (0.6s) > animation (0.4s) so
         //    we never have two overlapping in-flight animations on the
-        //    same ScrollView — that was the "scroll war" producing
-        //    visible jitter on fast-talking podcasts.
+        //    same ScrollView.
         if now.timeIntervalSince(lastScrollAt) < 0.6 { return }
         // 2. User-scroll respect: if the user moved the ScrollView in
-        //    the last 5 seconds, leave them where they are. Resumes
-        //    automatically once the grace period elapses without new
-        //    user activity.
-        if now.timeIntervalSince(userScrolledAt) < 5.0 { return }
+        //    the last 5 seconds, leave them where they are. Read from
+        //    the plain-class scrollState — no SwiftUI tracking, no
+        //    invalidation, but always has the latest value because
+        //    the Binding setter mutates it synchronously.
+        if now.timeIntervalSince(scrollState.userScrolledAt) < 5.0 { return }
 
         let lines: [StreamLine] = transcribing
             ? (transcribeJob?.streamingLines ?? [])
@@ -965,10 +965,10 @@ struct EpisodeView: View {
         let key = lines[activeLineIdx].id
         lastScrollAt = now
         // Stamp BEFORE triggering the animation so the impending
-        // `observedAnchor` changes (caused by our own scroll) fall
+        // observedAnchor changes (caused by our own scroll) fall
         // inside the settling window and don't get classified as
         // user activity.
-        lastProgrammaticScrollAt = now
+        scrollState.lastProgrammaticScrollAt = now
         PerfCounters.shared.scrollFired()
         // Shorter animation (0.4s) so it ends well within the throttle
         // window. Less time for the ScrollView to compete with any
@@ -1688,6 +1688,27 @@ struct EpisodeView: View {
         store.rebuildConcepts()
     }
 
+}
+
+/// Plain mutable holder for transcript scroll-detection state. NOT
+/// @Observable. Reads from `.scrollPosition(id:)`'s binding setter
+/// mutate this; SwiftUI doesn't see those mutations, so the parent
+/// EpisodeView body does NOT re-evaluate on every scroll-row crossing.
+///
+/// The data this holds:
+///   - `observedAnchor`: which row id is currently at the ScrollView's
+///     center anchor. Updated by SwiftUI via the binding.
+///   - `lastProgrammaticScrollAt`: when we ourselves called scrollTo.
+///     Anchor changes inside the 0.9s window after this don't count
+///     as user activity — they're our own animation settling.
+///   - `userScrolledAt`: when the user last moved the ScrollView with
+///     their own gesture. `performAutoScroll` reads this to suppress
+///     auto-scroll for 5s after.
+@MainActor
+final class TranscriptScrollState {
+    var observedAnchor: Int? = nil
+    var lastProgrammaticScrollAt: Date = .distantPast
+    var userScrolledAt: Date = .distantPast
 }
 
 /// Equatable so that on every player tick (which only flips `isActive` for
