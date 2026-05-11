@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import Observation
+import Combine
 
 @Observable
 final class AudioPlayerStore {
@@ -9,6 +10,17 @@ final class AudioPlayerStore {
     var currentTime: Double = 0
     var duration: Double = 0
     private(set) var errorMessage: String?
+
+    /// Pure-Combine tick stream for views that want per-tick updates
+    /// WITHOUT putting `currentTime` in their body's @Observable
+    /// dependency set. Read this property to subscribe via
+    /// `.onReceive(...)`; the read goes through @ObservationIgnored
+    /// so it never adds to the parent view's tracked set, even when
+    /// the parent re-evaluates body for other reasons. The subject
+    /// emits the same value as `currentTime`, just over a channel
+    /// SwiftUI doesn't watch.
+    @ObservationIgnored
+    let timePublisher = PassthroughSubject<Double, Never>()
 
     /// User-controlled playback speed. AVPlayer's `rate` is also the
     /// "is playing" signal (rate == 0 ⇒ paused), so we keep our preferred
@@ -37,12 +49,16 @@ final class AudioPlayerStore {
         let interval = CMTime(seconds: 0.5, preferredTimescale: 600)
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             guard let self else { return }
-            self.currentTime = time.seconds
+            let t = time.seconds
+            self.currentTime = t
             if let dur = self.player?.currentItem?.duration.seconds, dur.isFinite, dur > 0 {
                 self.duration = dur
             }
+            // Fan out to subscribers that prefer the non-tracked
+            // channel (e.g. EpisodeView's active-line updater).
+            self.timePublisher.send(t)
             if let id = self.currentEpisodeID {
-                self.onPositionChanged?(id, self.currentTime, self.duration)
+                self.onPositionChanged?(id, t, self.duration)
             }
         }
 

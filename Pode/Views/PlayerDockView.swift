@@ -610,9 +610,16 @@ private struct ChapterScrubber: View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { v in
+                        // ONLY update local dragRatio for visual feedback
+                        // (the fill capsule reads `dragRatio ?? livePct`).
+                        // We deliberately do NOT call onScrub here — that
+                        // path used to AVPlayer-seek on every drag tick
+                        // (60+ Hz), each seek updated `currentTime` which
+                        // propagated to every Observable subscriber and
+                        // melted the main thread. The actual seek lands
+                        // on .onEnded only.
                         let ratio = min(1, max(0, v.location.x / geo.size.width))
                         dragRatio = ratio
-                        onScrub(duration * ratio)
                     }
                     .onEnded { v in
                         // Snap on release when the release point is close

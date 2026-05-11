@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import AppKit  // for NSEvent local monitor (user-scroll detection)
+import Combine // for AudioPlayerStore.timePublisher subscription
 
 struct EpisodeView: View {
     @Environment(\.brandAccent) private var accent: Color
@@ -65,10 +66,14 @@ struct EpisodeView: View {
     @State private var sortedCache: [StreamLine] = []
     @State private var activeLineIdx: Int = -1
     /// Wall-clock time of the last auto-scroll. We skip back-to-back
-    /// scrollTo calls within the animation window so a fast burst of
-    /// active-line transitions doesn't stack into a fighting set of
-    /// animations inside the ScrollView.
+    /// scrollTo calls within a short throttle window — defence
+    /// against rapid line crossings on fast-talking podcasts.
     @State private var lastScrollAt: Date = .distantPast
+    /// Last row id we passed to `proxy.scrollTo`. If the active line
+    /// ticked but the row id hasn't actually moved (Whisper sometimes
+    /// emits multiple segments inside what reads as a single visible
+    /// row), we short-circuit — no scrollTo call at all.
+    @State private var lastScrolledKey: Int? = nil
 
     /// "User last scrolled at" timestamp lives in a plain class so
     /// the NSEvent monitor's writes don't invalidate any SwiftUI
@@ -856,15 +861,23 @@ struct EpisodeView: View {
         .onAppear {
             refreshSortedCache(ep: ep)
             installScrollWheelMonitor()
+            // Prime activeLineIdx from the player's current position
+            // on first appear (e.g. landing on the episode mid-
+            // playback or after resuming a saved position).
+            updateActiveLine(at: store.player.currentTime, proxy: proxy, ep: ep)
         }
         .onDisappear { removeScrollWheelMonitor() }
-        // Active-line tracking: update @State once when the player
-        // crosses a line boundary. By moving this OUT of body we stop
-        // tracking player.currentTime as a body dep, which is the main
-        // reason the view used to re-render 60×/sec during playback.
-        .onChange(of: store.player.currentTime) { _, _ in
+        // Active-line tracking via Combine subject — NOT .onChange(of:
+        // store.player.currentTime). That earlier form put currentTime
+        // in body's @Observable dependency set, so SwiftUI invalidated
+        // EpisodeView on every player tick (2×/sec) and re-evaluated
+        // the entire 2400-row tree. The `timePublisher` is on an
+        // @ObservationIgnored field, so reading it during body adds
+        // nothing to the dep set — body only re-runs when
+        // `activeLineIdx` actually changes (line crossings).
+        .onReceive(store.player.timePublisher) { newTime in
             PerfCounters.shared.tick()
-            updateActiveLine(proxy: proxy, ep: ep)
+            updateActiveLine(at: newTime, proxy: proxy, ep: ep)
         }
         .onChange(of: activeLineIdx) { _, _ in
             PerfCounters.shared.activeLineChanged()
@@ -896,12 +909,14 @@ struct EpisodeView: View {
         activeLineIdx = -1
     }
 
-    /// Binary-search the active line for the current player time.
-    /// O(log n) per call instead of the old `last(where:)` linear scan.
-    /// Writes to `@State` so body re-renders only when the index
-    /// actually changes (i.e. when audio crosses a line boundary, not
-    /// every player tick).
-    private func updateActiveLine(proxy: ScrollViewProxy, ep: Episode) {
+    /// Binary-search the active line for the supplied player time.
+    /// O(log n) per call. Reads NOTHING from the player Observable
+    /// — caller passes the time, so this function (and its caller in
+    /// .onReceive) never adds currentTime to body's tracked deps.
+    /// Writes to `@State` only when the index actually crosses, so
+    /// body re-renders happen at line-crossing rate (~1/sec on
+    /// fast-talking podcasts), not at tick rate (2/sec).
+    private func updateActiveLine(at now: Double, proxy: ScrollViewProxy, ep: Episode) {
         guard store.player.currentEpisodeID == ep.id else {
             if activeLineIdx != -1 { activeLineIdx = -1 }
             return
@@ -913,7 +928,6 @@ struct EpisodeView: View {
             if activeLineIdx != -1 { activeLineIdx = -1 }
             return
         }
-        let now = store.player.currentTime
         var lo = 0, hi = lines.count
         while lo < hi {
             let mid = (lo + hi) / 2
@@ -948,15 +962,25 @@ struct EpisodeView: View {
             : sortedCache
         guard activeLineIdx < lines.count else { return }
         let key = lines[activeLineIdx].id
+        // Short-circuit: same row id as last time → no work.
+        if key == lastScrolledKey { return }
+        lastScrolledKey = key
         lastScrollAt = now
         PerfCounters.shared.scrollFired()
-        // Shorter animation (0.4s) so it ends well within the throttle
-        // window. NSEvent scroll-wheel monitor only fires on real
-        // user input, so programmatic scrolls here don't get
-        // misclassified as user activity.
-        withAnimation(.smooth(duration: 0.4, extraBounce: 0)) {
-            proxy.scrollTo(key, anchor: .center)
-        }
+        // INSTANT scroll — no withAnimation. The animated version
+        // ran a 400ms × 60fps interpolation loop, and on a 2400-row
+        // LazyVStack each frame forced SwiftUI to lay out all rows
+        // between the current and target offset (variable heights,
+        // so cumulative offset can't be precomputed). That cost
+        // didn't surface in body() timing — it lived in SwiftUI's
+        // post-body layout/render pass — but was the actual cause
+        // of the per-line-crossing hitch during playback.
+        //
+        // Snap gives up the smooth glide but the active line is
+        // already highlighted via `isActive` so the visual cue
+        // still reads cleanly; the user's eye doesn't need a 400ms
+        // tween to follow it.
+        proxy.scrollTo(key, anchor: .center)
     }
 
     /// Install a global scroll-wheel monitor that stamps
