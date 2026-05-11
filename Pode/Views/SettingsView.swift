@@ -48,6 +48,7 @@ struct SettingsView: View {
                 summaryProviderCard.padding(.bottom, 22)
                 liquidGlassCard.padding(.bottom, 22)
                 maintenanceCard.padding(.bottom, 22)
+                aboutCard.padding(.bottom, 22)
 
                 // Inline auto-save status. Not a button — the Save button
                 // was retired in favour of debounced writes.
@@ -642,6 +643,108 @@ struct SettingsView: View {
                 }
             }
             .buttonStyle(GhostButtonStyle())
+        }
+        .padding(28)
+        .glass(.panel)
+    }
+
+    // MARK: - About / Acknowledgements
+
+    /// Per-dependency attribution row. Tuples are
+    /// `(displayName, license, source URL)`. Kept here so adding a new
+    /// SwiftPM package means one new row, not a separate file.
+    private static let dependencies: [(name: String, license: String, url: String)] = [
+        ("WhisperKit",          "Apache 2.0", "https://github.com/argmaxinc/WhisperKit"),
+        ("swift-transformers",  "Apache 2.0", "https://github.com/huggingface/swift-transformers"),
+        ("swift-jinja",         "MIT",        "https://github.com/huggingface/swift-jinja"),
+        ("swift-collections",   "Apache 2.0", "https://github.com/apple/swift-collections"),
+        ("swift-crypto",        "Apache 2.0", "https://github.com/apple/swift-crypto"),
+        ("yyjson",              "MIT",        "https://github.com/ibireme/yyjson"),
+    ]
+
+    private var aboutCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(L10n.t("About", language: lang))
+                .font(.serif(22, weight: .medium))
+                .foregroundColor(Ink.primary)
+                .padding(.bottom, 4)
+            Text(t("Pode is open infrastructure on the shoulders of open-source. These are the libraries that make it work.", lang))
+                .font(.sans(13))
+                .foregroundColor(Ink.tertiary)
+                .lineSpacing(2)
+                .padding(.bottom, 18)
+
+            // Privacy + terms shortcuts — single source of truth lives on
+            // the marketing site so the legal copy stays one document.
+            HStack(spacing: 14) {
+                Link(destination: URL(string: "https://podecast.cc/privacy.html")!) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "hand.raised").font(.system(size: 10))
+                        Text(t("Privacy", lang))
+                    }
+                }
+                .buttonStyle(TextButtonStyle())
+                Link(destination: URL(string: "https://podecast.cc/terms.html")!) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "doc.text").font(.system(size: 10))
+                        Text(t("Terms", lang))
+                    }
+                }
+                .buttonStyle(TextButtonStyle())
+            }
+            .padding(.bottom, 22)
+
+            Text(t("Open-source libraries", lang).uppercased())
+                .font(.mono(10.5, weight: .semibold))
+                .tracking(1.3)
+                .foregroundColor(Ink.tertiary)
+                .padding(.bottom, 10)
+
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(Self.dependencies, id: \.name) { dep in
+                    HStack(spacing: 10) {
+                        Text(dep.name)
+                            .font(.sans(13.5, weight: .medium))
+                            .foregroundColor(Ink.primary)
+                        Text(dep.license)
+                            .font(.mono(10.5))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule().fill(Color.black.opacity(0.05))
+                            )
+                            .foregroundColor(Ink.secondary)
+                        Spacer()
+                        if let u = URL(string: dep.url) {
+                            Link(destination: u) {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "arrow.up.right").font(.system(size: 9))
+                                    Text(t("Source", lang)).font(.mono(11))
+                                }
+                                .foregroundColor(Ink.tertiary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .padding(.bottom, 18)
+
+            Text(t("Audio transcription is performed locally via WhisperKit on Apple Silicon. AI summaries and Q&A use the provider configured above, calling that provider directly from this Mac — no Pode server is involved.", lang))
+                .font(.sans(12))
+                .foregroundColor(Ink.tertiary)
+                .lineSpacing(2)
+                .padding(.bottom, 14)
+
+            HStack(spacing: 8) {
+                Text("Pode v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")")
+                    .font(.mono(11))
+                    .foregroundColor(Ink.tertiary)
+                Text("·").foregroundColor(Ink.tertiary)
+                Text("© 2026")
+                    .font(.mono(11))
+                    .foregroundColor(Ink.tertiary)
+            }
         }
         .padding(28)
         .glass(.panel)

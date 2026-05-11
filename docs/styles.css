@@ -1095,3 +1095,85 @@ html[data-lang="zh"] body {
     .hero__actions { flex-direction: column; align-items: stretch; }
     .hero__actions .btn { width: 100%; }
 }
+
+/* =============================================================
+   Legal pages — privacy / terms. One-column long-form reading
+   layout that reuses the paper canvas + ink hierarchy from the
+   main page, no glass cards.
+   ============================================================= */
+.legal {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 100px var(--gutter) 140px;
+}
+.legal__eyebrow {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ink-tertiary);
+    margin-bottom: 14px;
+}
+.legal h1 {
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: 44px;
+    line-height: 1.1;
+    color: var(--ink-primary);
+    margin: 0 0 8px;
+    letter-spacing: -0.01em;
+}
+.legal__meta {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-tertiary);
+    margin-bottom: 40px;
+}
+.legal h2 {
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: 22px;
+    color: var(--ink-primary);
+    margin: 36px 0 12px;
+    letter-spacing: -0.005em;
+}
+.legal p, .legal li {
+    font-family: var(--serif);
+    font-size: 16px;
+    line-height: 1.65;
+    color: var(--ink-secondary);
+}
+.legal p {
+    margin: 0 0 14px;
+}
+.legal ul {
+    padding-left: 22px;
+    margin: 0 0 14px;
+}
+.legal li {
+    margin-bottom: 6px;
+}
+.legal code,
+.legal kbd {
+    font-family: var(--mono);
+    font-size: 13px;
+    background: rgba(0, 0, 0, 0.05);
+    padding: 1px 6px;
+    border-radius: 4px;
+    color: var(--ink-primary);
+}
+.legal a {
+    color: var(--accent-deep);
+    text-decoration: none;
+    border-bottom: 1px solid rgba(216, 90, 26, 0.25);
+}
+.legal a:hover {
+    border-bottom-color: var(--accent-deep);
+}
+.legal__lead {
+    font-size: 18px;
+    color: var(--ink-primary);
+    border-left: 2px solid var(--accent);
+    padding-left: 16px;
+    margin-bottom: 32px;
+}

@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy — Pode</title>
+    <meta name="description" content="Pode does not collect telemetry. Everything lives on your Mac.">
+    <link rel="icon" href="./assets/icon-1024.png">
+    <link rel="apple-touch-icon" href="./assets/icon-1024.png">
+    <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+    <!-- ─────────────────  NAV  ───────────────── -->
+    <nav class="nav">
+        <a href="./" class="nav__brand">
+            <img src="./assets/icon-128.png" alt="">
+            <span>pode</span>
+        </a>
+        <div class="nav__links">
+            <a href="./#features" data-i18n="nav.features">Features</a>
+            <a href="./#download" data-i18n="nav.download">Download</a>
+        </div>
+        <a class="btn btn--primary nav__cta" href="./#download">
+            <span data-i18n="nav.download">Download</span>
+        </a>
+    </nav>
+
+    <main class="legal">
+        <div class="legal__eyebrow" data-i18n="privacy.eyebrow">Pode · Privacy</div>
+        <h1 data-i18n="privacy.title">Privacy</h1>
+        <p class="legal__meta" data-i18n="privacy.updated">Last updated · May 2026</p>
+
+        <p class="legal__lead" data-i18n="privacy.lead">
+            Pode is a local-first app. It runs on your Mac, stores everything on your Mac,
+            and does not talk to a Pode server — because there is no Pode server.
+        </p>
+
+        <h2 data-i18n="privacy.h.collect">What Pode collects</h2>
+        <p data-i18n="privacy.collect.body">
+            Nothing. Pode does not include analytics, crash reporting, or any other form
+            of telemetry. It does not phone home on launch, on crash, or on any other
+            event. There is no account to sign up for and no identifier tied to you.
+        </p>
+
+        <h2 data-i18n="privacy.h.stores">What Pode stores on your Mac</h2>
+        <ul>
+            <li data-i18n="privacy.stores.subs">
+                <strong>Subscriptions, episodes, and playback state</strong> — written to a local
+                SwiftData database in your app sandbox.
+            </li>
+            <li data-i18n="privacy.stores.transcripts">
+                <strong>Transcripts, AI summaries, takeaways, and concept definitions</strong> —
+                stored in the same local database. They never leave your Mac unless you copy them out.
+            </li>
+            <li data-i18n="privacy.stores.audio">
+                <strong>Downloaded audio</strong> — saved to your app's caches directory so
+                offline playback works.
+            </li>
+            <li data-i18n="privacy.stores.keys">
+                <strong>API keys</strong> for AI providers — stored in your macOS Keychain.
+                They are read by Pode only when you trigger an AI action.
+            </li>
+        </ul>
+
+        <h2 data-i18n="privacy.h.third">What Pode talks to over the network</h2>
+        <p data-i18n="privacy.third.lead">
+            Pode makes network requests only to services you've directly asked it to use:
+        </p>
+        <ul>
+            <li data-i18n="privacy.third.itunes">
+                <strong>iTunes Search API</strong> — public podcast directory, used when
+                you search for shows or browse charts. No identifying information is sent.
+            </li>
+            <li data-i18n="privacy.third.rss">
+                <strong>Podcast RSS feeds + audio files</strong> — fetched directly from
+                whatever host the podcast publisher uses, the same way every podcast app does.
+            </li>
+            <li data-i18n="privacy.third.ai">
+                <strong>Your chosen AI provider</strong> (Anthropic, OpenAI, Google, or a
+                custom OpenAI-compatible endpoint) — only when you ask Pode to summarize,
+                ask a question, or generate a concept definition. Calls go from your Mac
+                directly to the provider using your key. The provider's own privacy policy
+                applies to those requests.
+            </li>
+            <li data-i18n="privacy.third.hf">
+                <strong>Hugging Face</strong> — only the first time you download a local
+                Whisper model. After that, transcription runs entirely offline on Apple Silicon.
+            </li>
+        </ul>
+
+        <h2 data-i18n="privacy.h.share">What Pode shares</h2>
+        <p data-i18n="privacy.share.body">
+            Nothing, with anyone. There is no "share" button that uploads your library,
+            no leaderboards, no community feed. Your listening is yours.
+        </p>
+
+        <h2 data-i18n="privacy.h.children">Children</h2>
+        <p data-i18n="privacy.children.body">
+            Pode is a general-purpose podcast app with no targeted advertising and no
+            data collection. It is not directed at children under 13 and contains no
+            mechanism that would collect data from them.
+        </p>
+
+        <h2 data-i18n="privacy.h.rights">Your rights</h2>
+        <p data-i18n="privacy.rights.body">
+            Because Pode doesn't have your data, there is nothing to request, export,
+            or delete on a server. To erase everything, drag the app to the trash —
+            macOS will remove the app sandbox along with it.
+        </p>
+
+        <h2 data-i18n="privacy.h.changes">Changes</h2>
+        <p data-i18n="privacy.changes.body">
+            If this policy changes in a way that affects users, the updated version
+            will be posted here with a new "Last updated" date.
+        </p>
+
+        <h2 data-i18n="privacy.h.contact">Contact</h2>
+        <p data-i18n="privacy.contact.body">
+            Questions about privacy: <a href="mailto:hi@podecast.cc">hi@podecast.cc</a>.
+        </p>
+    </main>
+
+    <footer class="footer">
+        <div class="footer__inner">
+            <div class="footer__brand">
+                <img src="./assets/icon-128.png" alt="">
+                <div>
+                    <strong>pode</strong>
+                    <small data-i18n="footer.tagline">podcasts, with presence</small>
+                </div>
+            </div>
+            <div class="footer__links">
+                <a href="./privacy.html" data-i18n="footer.privacy">Privacy</a>
+                <a href="./terms.html" data-i18n="footer.terms">Terms</a>
+            </div>
+            <p class="footer__copy" data-i18n="footer.copy">© steve studio</p>
+        </div>
+    </footer>
+
+    <script src="./app.js"></script>
+</body>
+</html>

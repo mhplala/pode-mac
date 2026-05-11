@@ -484,6 +484,16 @@ enum L10n {
         "speaker":             "说话人",
         "live":                "实时",
 
+        // Settings → About
+        "About":               "关于",
+        "Pode is open infrastructure on the shoulders of open-source. These are the libraries that make it work.":
+            "Pode 站在开源软件的肩膀上。以下是支撑它运行的库。",
+        "Privacy":             "隐私",
+        "Terms":               "条款",
+        "Open-source libraries": "开源库",
+        "Source":              "源码",
+        "Audio transcription is performed locally via WhisperKit on Apple Silicon. AI summaries and Q&A use the provider configured above, calling that provider directly from this Mac — no Pode server is involved.":
+            "转录使用 Apple Silicon 上的 WhisperKit 本地完成。AI 摘要与问答由上面配置的供应商提供，本机直接调用，不经过 Pode 的任何服务器。",
     ]
 }
 
