@@ -1071,6 +1071,9 @@ struct EpisodeView: View {
     @ViewBuilder
     private func aiInspector(ep: Episode, show: Show) -> some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Fixed top — header row + tab pill bar. Stays in place
+            // regardless of which pane is selected or how long the
+            // content is.
             HStack(spacing: 8) {
                 Image(systemName: "sparkles")
                     .foregroundColor(accent)
@@ -1092,23 +1095,42 @@ struct EpisodeView: View {
             )
             .padding(.bottom, 16)
 
-            if !ep.transcribed {
-                Text(t("Transcribe first to enable AI.", lang))
-                    .font(.serif(14))
-                    .italic()
-                    .foregroundColor(Ink.tertiary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 24)
-            } else {
-                switch aiTab {
-                case .summary: summaryPane(ep: ep, show: show)
-                case .takeaways: takeawaysPane(ep: ep, show: show)
-                case .ask: askPane(ep: ep)
+            // Scrollable pane content. Without this the takeaways list
+            // (10-20+ items on dense episodes) extended the panel past
+            // the viewport and forced the outer GlassScroll to scroll
+            // — which fought any in-flight animations on the page and
+            // produced visible jitter. Now: panel is locked to the
+            // same height as the left tabs card, content scrolls
+            // internally.
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if !ep.transcribed {
+                        Text(t("Transcribe first to enable AI.", lang))
+                            .font(.serif(14))
+                            .italic()
+                            .foregroundColor(Ink.tertiary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 24)
+                    } else {
+                        switch aiTab {
+                        case .summary: summaryPane(ep: ep, show: show)
+                        case .takeaways: takeawaysPane(ep: ep, show: show)
+                        case .ask: askPane(ep: ep)
+                        }
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // Small bottom pad so the last item doesn't kiss the
+                // glass edge when scrolled to the bottom.
+                .padding(.bottom, 8)
             }
+            .scrollIndicators(.hidden)
         }
         .padding(22)
         .glass(.panel)
+        // Match the left tabs card's height so the two columns line
+        // up. The inner ScrollView soaks up any overflow.
+        .frame(height: tabContentHeight)
     }
 
     /// AI provider config for the *summary* operations. Resolves provider,
