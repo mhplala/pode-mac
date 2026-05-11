@@ -11,17 +11,20 @@
 </head>
 <body>
     <nav class="nav">
-        <a href="./" class="nav__brand">
-            <img src="./assets/icon-128.png" alt="">
-            <span>pode</span>
+        <a class="nav__brand" href="./">
+            <img class="nav__icon" src="./assets/icon-128.png" alt="Pode">
+            <span class="nav__wordmark">pode</span>
         </a>
-        <div class="nav__links">
-            <a href="./#features" data-i18n="nav.features">Features</a>
-            <a href="./#download" data-i18n="nav.download">Download</a>
+        <div class="nav__right">
+            <button class="lang-toggle" id="lang-toggle" aria-label="Toggle language">
+                <span class="lang-toggle__opt" data-lang-opt="en">EN</span>
+                <span class="lang-toggle__sep">·</span>
+                <span class="lang-toggle__opt" data-lang-opt="zh">中</span>
+            </button>
+            <a class="btn btn--primary nav__cta" href="./#download">
+                <span data-i18n="nav.download">Download</span>
+            </a>
         </div>
-        <a class="btn btn--primary nav__cta" href="./#download">
-            <span data-i18n="nav.download">Download</span>
-        </a>
     </nav>
 
     <main class="legal">
