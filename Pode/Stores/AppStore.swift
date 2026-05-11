@@ -195,10 +195,14 @@ final class AppStore {
             case .geminiModel: if let v = r.stringValue { s.geminiModel = v }
             case .customModel: if let v = r.stringValue { s.customModel = v }
             case .appLanguage: if let v = r.stringValue { s.appLanguage = v }
+            case .playbackRate: if let v = r.doubleValue { s.playbackRate = v }
             case .none: break
             }
         }
         self.settings = s
+        // Restore the user's preferred playback rate on launch so the
+        // player picks up where they left off across sessions.
+        player.playbackRate = s.playbackRate
     }
 
     func saveSettings(_ s: AppSettings) {
@@ -228,6 +232,7 @@ final class AppStore {
             (.geminiModel, s.geminiModel, nil, nil),
             (.customModel, s.customModel, nil, nil),
             (.appLanguage, s.appLanguage, nil, nil),
+            (.playbackRate, nil, s.playbackRate, nil),
         ]
         for (key, str, dbl, bln) in pairs {
             let keyString = key.rawValue
@@ -405,6 +410,17 @@ final class AppStore {
         } else {
             startPlaying(episode)
         }
+    }
+
+    /// Set the player's speed and persist it to settings so the choice
+    /// survives across launches. Routes through the player store (which
+    /// pushes the rate onto AVPlayer if currently playing) and updates
+    /// `settings.playbackRate` so the next launch restores it.
+    func setPlaybackRate(_ newRate: Double) {
+        player.setPlaybackRate(newRate)
+        var s = settings
+        s.playbackRate = newRate
+        saveSettings(s)
     }
 
     private func maybePersistPlaybackPosition(episodeID: String, time: Double, duration: Double) {

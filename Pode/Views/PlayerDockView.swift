@@ -123,7 +123,63 @@ private struct TransportRow: View {
             .buttonStyle(.plain)
             DockIcon(systemName: "goforward.5") { store.player.skip(5) }
             DockBtn(label: "+30") { store.player.skip(30) }
+            RatePicker(store: store)
         }
+    }
+}
+
+/// Playback speed picker. Renders the current rate (e.g. "1.5×") and opens
+/// a Menu of presets on click. Active rate is highlighted with the brand
+/// accent so the user can see at a glance whether playback is at normal
+/// speed or sped up.
+private struct RatePicker: View {
+    let store: AppStore
+    @Environment(\.brandAccent) private var accent: Color
+
+    /// Preset rates. Round set that covers "slow down a hair to catch a
+    /// line" through "podcast-junkie 3×". Skip 0.5 — too slow to actually
+    /// listen to a podcast.
+    private static let presets: [Double] = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0]
+
+    var body: some View {
+        let rate = store.player.playbackRate
+        let isCustom = rate != 1.0
+        Menu {
+            // Most-likely options first; checkmark on whichever matches
+            // the live rate so the user can confirm without doing the
+            // mental "what was it set to?" recall.
+            ForEach(Self.presets, id: \.self) { preset in
+                Button {
+                    store.setPlaybackRate(preset)
+                } label: {
+                    HStack {
+                        Text(Self.label(for: preset))
+                        if rate == preset { Image(systemName: "checkmark") }
+                    }
+                }
+            }
+        } label: {
+            Text(Self.label(for: rate))
+                .font(.mono(11, weight: .semibold))
+                .foregroundColor(isCustom ? accent : Ink.primary)
+                .frame(width: 44, height: 38)
+                .contentShape(Circle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Playback speed")
+    }
+
+    /// Format rates without trailing zeros and a trailing "×".
+    /// 1.0 → "1×", 1.5 → "1.5×", 1.75 → "1.75×". Cleaner than always
+    /// padding to two decimals.
+    static func label(for rate: Double) -> String {
+        let asInt = Int(rate)
+        if Double(asInt) == rate { return "\(asInt)×" }
+        // 1.25 / 1.5 / 1.75 etc — strip trailing zero if any
+        let s = String(format: "%g", rate)
+        return "\(s)×"
     }
 }
 

@@ -10,6 +10,12 @@ final class AudioPlayerStore {
     var duration: Double = 0
     private(set) var errorMessage: String?
 
+    /// User-controlled playback speed. AVPlayer's `rate` is also the
+    /// "is playing" signal (rate == 0 ⇒ paused), so we keep our preferred
+    /// rate separately here and only push it onto AVPlayer when playing.
+    /// Stored as Double so it round-trips cleanly through AppSettings.
+    var playbackRate: Double = 1.0
+
     private var player: AVPlayer?
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
@@ -59,7 +65,22 @@ final class AudioPlayerStore {
     func play() {
         guard let player else { return }
         player.play()
+        // AVPlayer.play() forces rate=1.0; re-apply the user's chosen
+        // rate after so the speed preference survives pause/play cycles.
+        if playbackRate != 1.0 {
+            player.rate = Float(playbackRate)
+        }
         isPlaying = true
+    }
+
+    /// Update playback speed. If we're currently playing, push the new
+    /// rate onto AVPlayer immediately; if paused, just store it — the
+    /// next `play()` will apply it.
+    func setPlaybackRate(_ newRate: Double) {
+        playbackRate = newRate
+        if isPlaying {
+            player?.rate = Float(newRate)
+        }
     }
 
     func pause() {

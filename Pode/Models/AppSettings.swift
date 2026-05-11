@@ -48,6 +48,11 @@ struct AppSettings: Codable, Equatable {
     /// written in. Stored as `AppLanguage.rawValue`. `auto` follows the
     /// system locale.
     var appLanguage: String = "auto"
+
+    // MARK: - Playback
+    /// Preferred playback speed, applied to AVPlayer's rate when playing.
+    /// Clamped on read to the supported preset range (0.5…3.0).
+    var playbackRate: Double = 1.0
 }
 
 enum SettingsKey: String, CaseIterable {
@@ -74,4 +79,5 @@ enum SettingsKey: String, CaseIterable {
     case geminiModel
     case customModel
     case appLanguage
+    case playbackRate
 }
