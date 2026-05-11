@@ -11,8 +11,8 @@ settings:
     CODE_SIGN_IDENTITY: "-"
     CODE_SIGN_STYLE: Automatic
     ENABLE_HARDENED_RUNTIME: YES
-    MARKETING_VERSION: "0.5.16"
-    CURRENT_PROJECT_VERSION: "21"
+    MARKETING_VERSION: "0.5.17"
+    CURRENT_PROJECT_VERSION: "22"
 packages:
   WhisperKit:
     url: https://github.com/argmaxinc/WhisperKit
@@ -31,8 +31,12 @@ targets:
       properties:
         CFBundleName: pode
         CFBundleDisplayName: pode
-        CFBundleShortVersionString: "0.4.0"
-        CFBundleVersion: "4"
+        # Pull from build settings (MARKETING_VERSION / CURRENT_PROJECT_VERSION)
+        # so the Info.plist tracks each release. Without these substitutions
+        # the literal "0.4.0" got baked in and the About card lagged behind
+        # the actual app version.
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSMinimumSystemVersion: "14.0"
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true

@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine  // GlassScroll's metrics-isolation subject
 
 // MARK: - Tokens
 
@@ -203,10 +204,14 @@ extension View {
 struct GlassScroll<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
-    @State private var contentH: CGFloat = 0
-    @State private var offsetY: CGFloat = 0
-    @State private var viewportH: CGFloat = 0
-    @State private var hovering = false
+    /// Scroll-position state lives in a plain class so writes from the
+    /// PreferenceKey don't invalidate GlassScroll itself. If they did
+    /// (the previous version), the entire `content()` view tree got
+    /// rebuilt on every scroll-tick — Library, Search, Knowledge, and
+    /// Browse all paid that re-diff cost on every scroll. Now only
+    /// `GlassScrollThumb` re-renders on scroll, and it's a single
+    /// capsule.
+    @State private var scrollMetrics = GlassScrollMetricsHolder()
 
     var body: some View {
         GeometryReader { outer in
@@ -226,30 +231,81 @@ struct GlassScroll<Content: View>: View {
             }
             .coordinateSpace(name: "glassScroll")
             .scrollIndicators(.hidden)
-            .onPreferenceChange(GlassScrollMetricsKey.self) { m in
-                offsetY = m.offsetY
-                contentH = m.contentH
+            // PreferenceKey writes here are routed into a plain class
+            // PLUS a Combine subject. The class is invisible to
+            // SwiftUI tracking (no view invalidates); the subject
+            // notifies only the `GlassScrollThumb` overlay (which
+            // subscribes via .onReceive). Net: scroll-position
+            // changes don't re-trigger GlassScroll's body.
+            .onPreferenceChange(GlassScrollMetricsKey.self) { [scrollMetrics] m in
+                scrollMetrics.offsetY = m.offsetY
+                scrollMetrics.contentH = m.contentH
+                scrollMetrics.publish()
             }
-            .onAppear { viewportH = outer.size.height }
-            .onChange(of: outer.size.height) { _, new in viewportH = new }
+            .onAppear {
+                scrollMetrics.viewportH = outer.size.height
+                scrollMetrics.publish()
+            }
+            .onChange(of: outer.size.height) { _, new in
+                scrollMetrics.viewportH = new
+                scrollMetrics.publish()
+            }
             .overlay(alignment: .topTrailing) {
-                if contentH > viewportH + 4 {
-                    let thumbH = max(48, viewportH * (viewportH / contentH))
-                    let maxOffset = max(1, contentH - viewportH)
-                    let progress = max(0, min(1, offsetY / maxOffset))
-                    let thumbY = progress * (viewportH - thumbH)
-                    Capsule()
-                        .fill(.ultraThinMaterial)
-                        .overlay(Capsule().fill(Color.white.opacity(0.18)))
-                        .overlay(
-                            Capsule().stroke(Color.white.opacity(0.35), lineWidth: 0.5)
-                        )
-                        .frame(width: hovering ? 8 : 5, height: thumbH)
-                        .offset(x: -4, y: thumbY)
-                        .animation(.easeOut(duration: 0.12), value: hovering)
-                        .onHover { hovering = $0 }
-                }
+                GlassScrollThumb(metrics: scrollMetrics)
             }
+        }
+    }
+}
+
+/// Plain class holding scroll metrics. Mutated synchronously by
+/// `onPreferenceChange`; signals via `changes` for the thumb to pick
+/// up. NOT @Observable — SwiftUI must not track these writes.
+@MainActor
+final class GlassScrollMetricsHolder {
+    var offsetY: CGFloat = 0
+    var contentH: CGFloat = 0
+    var viewportH: CGFloat = 0
+    /// Combine subject used by `GlassScrollThumb` to refresh its own
+    /// @State after metrics mutate. Subject reads are
+    /// observation-free.
+    let changes = PassthroughSubject<Void, Never>()
+
+    func publish() { changes.send() }
+}
+
+/// Renders the custom scrollbar thumb. Sole subscriber to the
+/// `GlassScrollMetricsHolder.changes` subject. Its body re-runs on
+/// scroll, but it's a single capsule — cheap.
+private struct GlassScrollThumb: View {
+    let metrics: GlassScrollMetricsHolder
+    @State private var offsetY: CGFloat = 0
+    @State private var contentH: CGFloat = 0
+    @State private var viewportH: CGFloat = 0
+    @State private var hovering = false
+
+    var body: some View {
+        Group {
+            if contentH > viewportH + 4 {
+                let thumbH = max(48, viewportH * (viewportH / contentH))
+                let maxOffset = max(1, contentH - viewportH)
+                let progress = max(0, min(1, offsetY / maxOffset))
+                let thumbY = progress * (viewportH - thumbH)
+                Capsule()
+                    .fill(.ultraThinMaterial)
+                    .overlay(Capsule().fill(Color.white.opacity(0.18)))
+                    .overlay(
+                        Capsule().stroke(Color.white.opacity(0.35), lineWidth: 0.5)
+                    )
+                    .frame(width: hovering ? 8 : 5, height: thumbH)
+                    .offset(x: -4, y: thumbY)
+                    .animation(.easeOut(duration: 0.12), value: hovering)
+                    .onHover { hovering = $0 }
+            }
+        }
+        .onReceive(metrics.changes) { _ in
+            if offsetY  != metrics.offsetY  { offsetY  = metrics.offsetY }
+            if contentH != metrics.contentH { contentH = metrics.contentH }
+            if viewportH != metrics.viewportH { viewportH = metrics.viewportH }
         }
     }
 }

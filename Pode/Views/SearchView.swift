@@ -12,15 +12,31 @@ struct SearchView: View {
     @Environment(\.appLanguage) private var lang: AppLanguage
     @Environment(\.brandAccent) private var accent: Color
     @Environment(AppStore.self) private var store
+    @Environment(\.modelContext) private var modelContext
 
     let query: String
 
     @Query(sort: [SortDescriptor(\Show.addedAt, order: .reverse)]) private var allShows: [Show]
     @Query(sort: [SortDescriptor(\Episode.pubDate, order: .reverse)]) private var allEpisodes: [Episode]
-    @Query private var allLines: [TranscriptLineModel]
+    // Transcript lines NO LONGER pulled into memory via @Query — for a
+    // heavy user that's tens of thousands of rows materialised at view
+    // init plus an O(n) lowercase+contains scan on every keystroke.
+    // We now fetch only matches via a SwiftData predicate with a
+    // fetchLimit, off the debounced query.
     @Query(sort: [SortDescriptor(\Highlight.createdAt, order: .reverse)]) private var allHighlights: [Highlight]
 
-    private var q: String { query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+    /// Debounced version of `query`. Updated 280ms after the last
+    /// keystroke. All filtering downstream reads `q` (this) — so
+    /// typing fast doesn't trigger filter work on every character.
+    @State private var debouncedQuery: String = ""
+    @State private var debounceTask: Task<Void, Never>? = nil
+    /// Transcript-line search results, materialised by `runLineSearch`
+    /// after the debounce settles.
+    @State private var matchedLinesState: [TranscriptLineModel] = []
+
+    /// Lowercased trimmed search needle. Falls back to empty when
+    /// debounce hasn't caught up yet.
+    private var q: String { debouncedQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
 
     private var matchedShows: [Show] {
         guard !q.isEmpty else { return [] }
@@ -37,12 +53,7 @@ struct SearchView: View {
         .prefix(40)
         .map { $0 }
     }
-    private var matchedLines: [TranscriptLineModel] {
-        guard !q.isEmpty else { return [] }
-        return allLines.filter { $0.text.lowercased().contains(q) }
-            .prefix(60)
-            .map { $0 }
-    }
+    private var matchedLines: [TranscriptLineModel] { matchedLinesState }
     private var matchedHighlights: [Highlight] {
         guard !q.isEmpty else { return [] }
         return allHighlights.filter { $0.quote.lowercased().contains(q) }
@@ -96,6 +107,46 @@ struct SearchView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 32)
             .padding(.top, 8)
+        }
+        // Debounce typing → write `debouncedQuery` 280ms after the
+        // last keystroke. All downstream filtering depends on this
+        // so a fast typist doesn't pay search cost per character.
+        .onAppear {
+            debouncedQuery = query   // initial paint matches current query
+        }
+        .onChange(of: query) { _, new in
+            debounceTask?.cancel()
+            debounceTask = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(280))
+                if Task.isCancelled { return }
+                debouncedQuery = new
+            }
+        }
+        // SwiftData predicate fetch with fetchLimit replaces the old
+        // "@Query everything + .filter in memory" pattern. For a
+        // heavy user that path materialised hundreds of thousands of
+        // TranscriptLineModel instances per search-input event.
+        .task(id: debouncedQuery) {
+            await runLineSearch()
+        }
+    }
+
+    @MainActor
+    private func runLineSearch() async {
+        let needle = debouncedQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else {
+            if !matchedLinesState.isEmpty { matchedLinesState = [] }
+            return
+        }
+        // localizedStandardContains is Unicode-aware case-insensitive
+        // — handled at SQLite level by SwiftData, no full-table scan.
+        var desc = FetchDescriptor<TranscriptLineModel>(
+            predicate: #Predicate { $0.text.localizedStandardContains(needle) },
+            sortBy: [SortDescriptor(\.t)]
+        )
+        desc.fetchLimit = 60
+        if let rows = try? modelContext.fetch(desc) {
+            matchedLinesState = rows
         }
     }
 

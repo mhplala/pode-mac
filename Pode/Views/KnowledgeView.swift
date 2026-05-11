@@ -321,9 +321,18 @@ private struct Galaxy: View {
     @Binding var hovered: String?
     let colors: [String: Color]
 
+    /// Cached layout. `computeLayout` runs an O(n) collision-avoidance
+    /// pass for label placement — re-running it on every hover/select
+    /// (which fires when SwiftUI invalidates body via @Binding writes)
+    /// produced perceptible jank with 30+ concepts. We key the cache on
+    /// (concept names + cluster + width + height) so it only
+    /// recomputes when something layout-affecting actually changes.
+    @State private var cachedLayout: GalaxyLayout? = nil
+    @State private var cachedKey: String = ""
+
     var body: some View {
         GeometryReader { geo in
-            let layout = computeLayout(width: geo.size.width, height: geo.size.height)
+            let layout = resolveLayout(width: geo.size.width, height: geo.size.height)
 
             ZStack {
                 // Aurora per cluster — purely decorative. SwiftUI hit-tests
@@ -471,6 +480,41 @@ private struct Galaxy: View {
             }
         }
         return best?.name
+    }
+
+    /// Cache-aware wrapper around `computeLayout`. Returns the
+    /// previous result when the layout-affecting inputs are
+    /// unchanged. Crucially, `selected` / `hovered` are NOT inputs
+    /// to the layout — re-rendering body on hover or selection
+    /// should hit this cache.
+    private func resolveLayout(width: CGFloat, height: CGFloat) -> GalaxyLayout {
+        let key = layoutKey(width: width, height: height)
+        if let hit = cachedLayout, cachedKey == key {
+            return hit
+        }
+        let fresh = computeLayout(width: width, height: height)
+        // SwiftUI doesn't allow @State writes inside body; defer to
+        // the next runloop tick. Even when we return the recomputed
+        // `fresh` synchronously now, the cache will hold for the
+        // next render pass.
+        Task { @MainActor in
+            cachedKey = key
+            cachedLayout = fresh
+        }
+        return fresh
+    }
+
+    private func layoutKey(width: CGFloat, height: CGFloat) -> String {
+        // Round dimensions so sub-pixel window resizes don't bust
+        // the cache. Concept identity = name + cluster + count
+        // (count drives `size`, so it affects layout via the dot
+        // radius even though it doesn't move centers).
+        let w = Int(width.rounded())
+        let h = Int(height.rounded())
+        let conceptPart = concepts
+            .map { "\($0.name)|\($0.cluster)|\($0.count)" }
+            .joined(separator: "\n")
+        return "\(w)x\(h)|\(conceptPart)"
     }
 
     /// One pass over the concepts. Builds positions, cluster centers, and
@@ -689,6 +733,28 @@ private struct Timeline: View {
         let maxDate = transcribed.map(\.pubDate).max() ?? .now
         let span = max(1, maxDate.timeIntervalSince(minDate))
 
+        // Precompute lookups ONCE per body:
+        //   - `conceptByName`: O(1) concept lookup by name. Replaces
+        //     `concepts.first(where:)` inside the per-cluster ForEach,
+        //     which was an O(n²) over concepts × episodes.
+        //   - `dotsByCluster`: walk all transcribed episodes once and
+        //     bucket emitted dots by cluster. Replaces the per-cluster
+        //     "filter then flatMap then nested first(where:)" pattern
+        //     that scaled poorly with concept count.
+        let conceptByName: [String: Concept] = Dictionary(
+            concepts.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a }
+        )
+        var dotsByCluster: [String: [TLDot]] = [:]
+        for ep in transcribed {
+            guard let names = ep.aiConcepts else { continue }
+            for name in names {
+                guard let c = conceptByName[name] else { continue }
+                dotsByCluster[c.cluster, default: []].append(
+                    TLDot(concept: name, ts: ep.pubDate, count: c.count)
+                )
+            }
+        }
+
         return VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Color.clear.frame(width: 120)
@@ -706,15 +772,8 @@ private struct Timeline: View {
             .padding(.bottom, 8)
 
             ForEach(clusters, id: \.self) { cluster in
-                let conceptsInCluster = concepts.filter { $0.cluster == cluster }.map(\.name)
-                let dots: [TLDot] = transcribed.flatMap { ep -> [TLDot] in
-                    guard let names = ep.aiConcepts else { return [] }
-                    return names.compactMap { name in
-                        guard conceptsInCluster.contains(name),
-                              let c = concepts.first(where: { $0.name == name }) else { return nil }
-                        return TLDot(concept: name, ts: ep.pubDate, count: c.count)
-                    }
-                }
+                // Pre-bucketed by `dotsByCluster` above — O(1) lookup.
+                let dots: [TLDot] = dotsByCluster[cluster] ?? []
                 HStack(alignment: .center, spacing: 0) {
                     HStack(spacing: 8) {
                         Circle().fill(colors[cluster] ?? .gray)

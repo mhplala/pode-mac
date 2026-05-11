@@ -135,7 +135,12 @@ struct LibraryView: View {
                     .padding(40)
                     .glass(.panel)
             } else {
-                VStack(spacing: 0) {
+                // LazyVStack so a Show with hundreds of episodes
+                // doesn't materialize every EpisodeRow up front —
+                // only the rows in the visible viewport (plus a
+                // small overscroll buffer) get built. Massive win
+                // on first-paint and on scroll for big libraries.
+                LazyVStack(spacing: 0) {
                     ForEach(filtered) { ep in
                         EpisodeRow(index: nil, episode: ep)
                     }
@@ -256,7 +261,11 @@ struct ShowDetailView: View {
                             .padding(40)
                             .glass(.panel)
                     } else {
-                        VStack(spacing: 0) {
+                        // LazyVStack — same reasoning as the library
+                        // index list: a long-running show with 500+
+                        // episodes used to materialize every row up
+                        // front on first paint.
+                        LazyVStack(spacing: 0) {
                             ForEach(sortedEps) { ep in
                                 // On a single show's page the cover + page
                                 // header already identify the show — skip
