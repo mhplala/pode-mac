@@ -161,42 +161,45 @@ struct EpisodeView: View {
         // it does capture every sort/scan/predicate/alloc done inline,
         // which is where most hidden cost lives.
         measureBody(.episode) {
-        GlassScroll {
-            VStack(alignment: .leading, spacing: 0) {
-                // Back button is rendered as a fixed-position overlay
-                // below — leaving an empty top spacer here so the rest
-                // of the page content doesn't slide under it.
-                Color.clear.frame(height: 32)
+        // Outer container is intentionally NOT scrollable. Each inner
+        // pane (transcript / description / highlights / AI inspector)
+        // handles its own internal scrolling, so the page itself stays
+        // fixed at viewport height. This eliminates the class of bug
+        // where outer-scroll layout work competed with in-pane
+        // animations + ScrollViews on the main thread.
+        VStack(alignment: .leading, spacing: 0) {
+            // Back button is rendered as a fixed-position overlay
+            // below — leaving an empty top spacer here so the rest
+            // of the page content doesn't slide under it.
+            Color.clear.frame(height: 32)
 
-                if let ep = episodes.first, let show = ep.show {
-                    // Always 2-column. Window has a minimum width that
-                    // guarantees this layout fits, so we don't flip to a
-                    // stacked variant — switching tabs won't shuffle the
-                    // overall page structure.
-                    VStack(spacing: 16) {
-                        headerCard(ep: ep, show: show)
-                        HStack(alignment: .top, spacing: 20) {
-                            tabsCard(ep: ep, show: show)
-                                .frame(maxWidth: .infinity)
-                            aiInspector(ep: ep, show: show)
-                                .frame(width: 380)
-                        }
+            if let ep = episodes.first, let show = ep.show {
+                // Always 2-column. Window has a minimum width that
+                // guarantees this layout fits, so we don't flip to a
+                // stacked variant — switching tabs won't shuffle the
+                // overall page structure.
+                VStack(spacing: 16) {
+                    headerCard(ep: ep, show: show)
+                    HStack(alignment: .top, spacing: 20) {
+                        tabsCard(ep: ep, show: show)
+                            .frame(maxWidth: .infinity)
+                        aiInspector(ep: ep, show: show)
+                            .frame(width: 380)
                     }
-                    .padding(.top, 8)
-                    .padding(.bottom, 140)
-                } else {
-                    Text(t("Episode not found.", lang))
-                        .font(.serif(16))
-                        .italic()
-                        .foregroundColor(Ink.tertiary)
-                        .padding(.top, 32)
                 }
+                .padding(.top, 8)
+            } else {
+                Text(t("Episode not found.", lang))
+                    .font(.serif(16))
+                    .italic()
+                    .foregroundColor(Ink.tertiary)
+                    .padding(.top, 32)
             }
-            .frame(maxWidth: 1240, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 32)
-            .padding(.top, 8)
         }
+        .frame(maxWidth: 1240, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 32)
+        .padding(.top, 8)
         .alert(t("Delete transcript?", lang), isPresented: $confirmDeleteTranscript) {
             Button(t("Cancel", lang), role: .cancel) {}
             Button(t("Delete", lang), role: .destructive) { deleteTranscript() }
@@ -674,6 +677,11 @@ struct EpisodeView: View {
             }
         }
         .glass(.panel)
+        // Lock outer height so this card lines up with aiInspector
+        // (which is also `.frame(height: tabContentHeight)`). The
+        // inner panes now fill the remaining space via their own
+        // ScrollViews — no more dual-mode height calculation.
+        .frame(height: tabContentHeight)
     }
 
     private func label(for tab: EpTab, ep: Episode) -> String {
@@ -882,7 +890,10 @@ struct EpisodeView: View {
             }
             userScrolledAt = now
         }
-        .frame(height: tabContentHeight)
+        // Fill the remaining height inside the parent tabsCard. The
+        // tabsCard outer locks to `tabContentHeight`; this inner pane
+        // soaks up whatever's left after the tab strip.
+        .frame(maxHeight: .infinity)
         }
     }
 
@@ -1015,7 +1026,7 @@ struct EpisodeView: View {
             }
             .padding(24)
         }
-        .frame(height: tabContentHeight)
+        .frame(maxHeight: .infinity)
     }
 
     /// Build an `AttributedString` from a podcast description: paragraph-
@@ -1092,7 +1103,7 @@ struct EpisodeView: View {
             }
             .padding(24)
         }
-        .frame(height: tabContentHeight)
+        .frame(maxHeight: .infinity)
     }
 
     /// Truncate a sorted-by-t streaming list to the longest contiguous
@@ -1846,7 +1857,6 @@ struct TranscribingBanner: View {
         case .loadingModel:      return "LOADING MODEL · \(modelLabel)"
         case .downloadingModel:  return "DOWNLOADING MODEL · \(modelLabel)"
         case .transcribing:      return "TRANSCRIBING · \(modelLabel)"
-        case .inferringSpeakers: return "TAGGING SPEAKERS"
         case .finalizing:        return "FINALIZING"
         }
     }
@@ -1860,8 +1870,6 @@ struct TranscribingBanner: View {
             return t("Downloading the model from the network", lang)
         case .transcribing:
             return t("Decoding speech, line by line", lang)
-        case .inferringSpeakers:
-            return t("Asking the AI who said what", lang)
         case .finalizing:
             return t("Saving transcript", lang)
         }

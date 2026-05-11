@@ -550,62 +550,13 @@ final class TranscribeStore {
 
         let lineCount = episode.transcriptLines.count
 
-        // Optional: speaker inference via the configured AI provider.
-        // Decoupled from `lineIndex` — uses sorted-by-t position so
-        // streaming's seek-based lineIndex doesn't poison the lookup.
-        let aiConfig = AIClientConfig(settings: settings)
-        let aiReady = !aiConfig.apiKey.isEmpty && !aiConfig.model.isEmpty
-        if settings.inferSpeakers, aiReady,
-           let show = episode.show, lineCount > 0 {
-            update(jobID) {
-                $0.stage = .inferringSpeakers; $0.stageProgress = 0
-            }
-            TaskCenter.shared.setSubtitle(centerId, "Tagging speakers…")
-            let sorted = episode.transcriptLines.sorted { $0.t < $1.t }
-            let pairs = sorted.enumerated().map { (idx, line) in
-                (index: idx, text: line.text)
-            }
-            do {
-                let assignments = try await AIService.inferSpeakers(
-                    lines: pairs,
-                    showTitle: show.title,
-                    showHost: show.host,
-                    episodeTitle: episode.title,
-                    config: aiConfig
-                )
-                // Apply by position in the same sorted array we sent.
-                // Wrap the tight write loop in a non-animating
-                // SwiftUI transaction so any view observing these
-                // SwiftData models doesn't try to animate 300 KVO
-                // notifications in a row. The actual UI update still
-                // happens — just as a single batched diff after save.
-                withAnimation(nil) {
-                    for (idx, line) in sorted.enumerated() {
-                        if let s = assignments[idx] { line.speaker = s }
-                    }
-                }
-                try? ctx.save()
-                update(jobID) {
-                    $0.stage = .inferringSpeakers; $0.stageProgress = 1
-                }
-                let count = Set(assignments.values).count
-                TaskCenter.shared.succeed(
-                    centerId,
-                    subtitle: "Done · \(lineCount) lines · \(count) speakers"
-                )
-                toast("Transcribed · \(lineCount) lines · \(count) speakers")
-            } catch {
-                // Speaker inference is best-effort.
-                TaskCenter.shared.succeed(
-                    centerId,
-                    subtitle: "Done · \(lineCount) lines (speakers skipped)"
-                )
-                toast("Transcribed · \(lineCount) lines")
-            }
-        } else {
-            TaskCenter.shared.succeed(centerId, subtitle: "Done · \(lineCount) lines")
-            toast("Transcribed · \(lineCount) lines")
-        }
+        // Speaker inference was removed — it never produced reliable
+        // tags for short / single-host conversations and ate AI tokens
+        // for no real signal. The `speaker` field on TranscriptLineModel
+        // is kept for backward-compat with any rows that already had
+        // tags assigned, but no new tags are generated.
+        TaskCenter.shared.succeed(centerId, subtitle: "Done · \(lineCount) lines")
+        toast("Transcribed · \(lineCount) lines")
 
         update(jobID) { $0.stage = .finalizing; $0.stageProgress = 1 }
     }
@@ -653,8 +604,6 @@ struct TranscribeJob {
         case downloadingModel
         /// Whisper is producing text.
         case transcribing
-        /// Optional AI step assigning speakers to transcript lines.
-        case inferringSpeakers
         /// Persisting + clean-up. Briefly shown to avoid a flash of empty UI.
         case finalizing
     }
@@ -699,8 +648,7 @@ struct TranscribeJob {
         case .fetchingAudio:     return 0.00 + 0.30 * stageProgress
         case .loadingModel:      return 0.30 + 0.05 * stageProgress
         case .downloadingModel:  return 0.30 + 0.20 * stageProgress
-        case .transcribing:      return 0.50 + 0.45 * stageProgress
-        case .inferringSpeakers: return 0.95 + 0.05 * stageProgress
+        case .transcribing:      return 0.50 + 0.50 * stageProgress
         case .finalizing:        return 1.0
         }
     }
@@ -711,7 +659,6 @@ struct TranscribeJob {
         case .loadingModel:      return "Loading model…"
         case .downloadingModel:  return "Downloading model…"
         case .transcribing:      return "Transcribing…"
-        case .inferringSpeakers: return "Tagging speakers…"
         case .finalizing:        return "Finalizing…"
         }
     }

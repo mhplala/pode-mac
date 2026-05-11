@@ -508,21 +508,6 @@ struct SettingsView: View {
             Text(t("Whisper outputs Traditional by default; we convert to Simplified post-transcription. Turn off to keep Traditional.", lang))
                 .font(.sans(11.5))
                 .foregroundColor(Ink.tertiary)
-                .padding(.bottom, 8)
-
-            HStack {
-                Text(t("Infer speakers (AI)", lang))
-                    .font(.mono(10.5, weight: .semibold))
-                    .tracking(1.3)
-                    .textCase(.uppercase)
-                    .foregroundColor(Ink.tertiary)
-                Spacer()
-                Toggle("", isOn: $draft.inferSpeakers).labelsHidden()
-            }
-            .padding(.top, 4)
-            Text(t("After transcription, the AI assigns each line to a speaker using context.", lang))
-                .font(.sans(11.5))
-                .foregroundColor(Ink.tertiary)
         }
         .padding(28)
         .glass(.panel)

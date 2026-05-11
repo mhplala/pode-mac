@@ -326,49 +326,9 @@ Return JSON.
         return raw.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    static func inferSpeakers(
-        lines: [(index: Int, text: String)],
-        showTitle: String,
-        showHost: String,
-        episodeTitle: String,
-        config: AIClientConfig
-    ) async throws -> [Int: String] {
-        let numbered = lines.map { "[\($0.index)] \($0.text)" }.joined(separator: "\n")
-        let trimmed = String(numbered.prefix(60000))
-
-        let system = """
-        You are tagging each line of a podcast transcript with the speaker.
-        Use natural names when context makes them clear (host introductions,
-        "罗老师", "请问 X", proper-noun cues). When unsure, fall back to
-        "Speaker A", "Speaker B"… consistently — same person, same label.
-        Output STRICT JSON only:
-        { "assignments": [ { "line": <int>, "speaker": <string> } ] }
-        Only include lines whose speaker is reasonably confident — skip the
-        rest. Don't invent speakers; only use names that appear in the text
-        or generic Speaker A/B/C labels.
-        """
-
-        let user = """
-        Show: \(showTitle)
-        Host: \(showHost.isEmpty ? "(unknown)" : showHost)
-        Episode: \(episodeTitle)
-
-        Lines (numbered):
-        \(trimmed)
-        """
-
-        let raw = try await call(config: config, system: system, user: user, maxTokens: 8000, jsonMode: true)
-        guard let json = extractJSON(from: raw) else { throw AIError.noJSON(config.provider) }
-        var out: [Int: String] = [:]
-        let assignments = (json["assignments"] as? [[String: Any]]) ?? []
-        for a in assignments {
-            guard let line = a["line"] as? Int,
-                  let speaker = (a["speaker"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !speaker.isEmpty else { continue }
-            out[line] = speaker
-        }
-        return out
-    }
+    // Speaker inference (AIService.inferSpeakers) was removed — it was
+    // unreliable on single-host / short conversations and ate a
+    // significant chunk of AI tokens per episode for marginal value.
 
     // MARK: - Provider dispatch
 
@@ -614,14 +574,4 @@ enum ClaudeService {
                                        lines: lines, config: cfg)
     }
 
-    static func inferSpeakers(
-        lines: [(index: Int, text: String)],
-        showTitle: String, showHost: String, episodeTitle: String,
-        apiKey: String, model: String = "claude-haiku-4-5-20251001"
-    ) async throws -> [Int: String] {
-        let cfg = AIClientConfig(provider: .anthropic, apiKey: apiKey, model: model, baseURL: "")
-        return try await AIService.inferSpeakers(lines: lines, showTitle: showTitle,
-                                                 showHost: showHost, episodeTitle: episodeTitle,
-                                                 config: cfg)
-    }
 }

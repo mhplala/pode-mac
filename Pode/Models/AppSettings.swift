@@ -25,8 +25,6 @@ struct AppSettings: Codable, Equatable {
     var localWhisperModel: String = "openai_whisper-large-v3-v20240930_turbo"
     /// Have we completed the first-run model picker for the local engine?
     var localWhisperPicked: Bool = false
-    /// Use the configured AI provider to infer speaker labels after transcribing.
-    var inferSpeakers: Bool = true
     /// Whisper language hint. Empty = auto-detect (uses WhisperKit's
     /// dedicated language-detection step on the first chunk, then pins the
     /// detected language for the rest). Specific value = pin from the start.
@@ -77,7 +75,6 @@ enum SettingsKey: String, CaseIterable {
     case transcribeEngine
     case localWhisperModel
     case localWhisperPicked
-    case inferSpeakers
     case transcribeLanguage
     case simplifiedChinese
     case summaryProvider

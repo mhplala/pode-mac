@@ -276,7 +276,6 @@ final class AppStore {
             case .transcribeEngine: if let v = r.stringValue { s.transcribeEngine = v }
             case .localWhisperModel: if let v = r.stringValue { s.localWhisperModel = v }
             case .localWhisperPicked: if let v = r.boolValue { s.localWhisperPicked = v }
-            case .inferSpeakers: if let v = r.boolValue { s.inferSpeakers = v }
             case .transcribeLanguage: if let v = r.stringValue { s.transcribeLanguage = v }
             case .simplifiedChinese: if let v = r.boolValue { s.simplifiedChinese = v }
             case .summaryProvider: if let v = r.stringValue { s.summaryProvider = v }
@@ -321,7 +320,6 @@ final class AppStore {
             (.transcribeEngine, s.transcribeEngine, nil, nil),
             (.localWhisperModel, s.localWhisperModel, nil, nil),
             (.localWhisperPicked, nil, nil, s.localWhisperPicked),
-            (.inferSpeakers, nil, nil, s.inferSpeakers),
             (.transcribeLanguage, s.transcribeLanguage, nil, nil),
             (.simplifiedChinese, nil, nil, s.simplifiedChinese),
             (.summaryProvider, s.summaryProvider, nil, nil),
