@@ -1,36 +1,29 @@
 /* =============================================================
    Pode website — language switching.
 
-   Strategy:
-     - Source language is English (lives directly in index.html).
-     - Chinese strings live in this file, keyed by `data-i18n="…"`
-       on the corresponding element. Toggling the language swaps
-       textContent in-place; no page reload, no flicker.
-     - User preference persists in localStorage under "pode.lang".
-       Default falls back to `navigator.language` — Chinese
-       browsers see 中文 on first visit.
-     - The toggle's two halves get a `data-lang-active` attribute
-       on the currently-selected option so CSS can style them.
+   Source language is English (lives directly in index.html).
+   Chinese strings keyed by `data-i18n="…"` on each translatable
+   element. Toggling swaps textContent in place; no reload.
+   Preference persists in localStorage under "pode.lang".
+   Default falls back to navigator.language.
    ============================================================= */
 
 const STORAGE_KEY = "pode.lang";
 
-// Chinese translations keyed by the same i18n string the HTML uses.
-// Keep this map in sync with `data-i18n="…"` attributes in index.html.
 const ZH = {
     // Nav
     "nav.download":           "下载",
 
     // Hero
-    "hero.eyebrow":           "PODCASTS · 全文转录",
-    "hero.title.before":      "专注地",
-    "hero.title.em":          "听",
+    "hero.eyebrow":           "原生 MAC 播客客户端",
+    "hero.title.before":      "听播客，",
+    "hero.title.em":          "在场",
     "hero.title.after":       "。",
-    "hero.sub":               "原生 macOS 播客客户端。智能队列、全文字幕、AI 摘要 —— 包裹在安静的、纸张般温暖的界面里，尊重你的注意力。",
+    "hero.sub":               "有些对话不该 1.5 倍速速通。Pode 是为那些你真心想记住的单集做的 —— 完整字幕、安静整理、围绕你的注意力。",
     "hero.cta.primary":       "下载 Mac 版",
-    "hero.req":               "需要 macOS 14 (Sonoma) 或更高 · Apple Silicon",
+    "hero.req":               "macOS 14 及以上 · Apple Silicon · 免费",
 
-    // Mockup
+    // Mockup (kept simple — mirrors the in-app strings)
     "mockup.tagline":         "podcasts, transcribed",
     "mockup.nav.listen":      "立即收听",
     "mockup.nav.browse":      "浏览",
@@ -43,90 +36,70 @@ const ZH = {
     "mockup.epTitle":         "聊聊 Agent、边界、与注意力的形状",
     "mockup.resume":          "继续 · 1:42:18",
 
-    // Philosophy
-    "philosophy.eyebrow":     "为什么是 PODE",
-    "philosophy.title.before":"为",
-    "philosophy.title.em":    "听",
-    "philosophy.title.after": "而设计，不是为算法。",
+    // Manifesto
+    "manifesto.eyebrow":      "我们为什么做这个",
+    "manifesto.body":         "大部分播客应用想留住你 —— 推你可能会播的内容，统计你的分钟数，弄丢你真正听过的那条线。Pode 走反方向。它把字幕交还给你，让你标记下打动你的部分，剩下的时候安静地让出位置。界面像纸一样温暖、克制，就是为了让声音本身能传过来。",
 
-    "phil.1.title":           "彻底原生",
-    "phil.1.body":             "SwiftUI、SwiftData、AVFoundation。没有 Electron、没有网页套壳、没有遥测。安装包约 13 MB，运行起来也像。",
-    "phil.2.title":           "你的字幕，在你的机器上",
-    "phil.2.body":             "WhisperKit 本地转录完全在你 Mac 的神经引擎上跑，或者用 OpenAI Whisper API。不管哪种，字幕都保存在你自己的磁盘里。",
-    "phil.3.title":           "值得存在的 AI",
-    "phil.3.body":             "自带 API key —— Claude、GPT、Gemini，或任何兼容 OpenAI 的服务。摘要、要点、向字幕提问 —— 统一在一个供应商切换后面。",
-    "phil.4.title":           "安静的界面",
-    "phil.4.body":             "纸张般温暖的画布。意大利斜体的标题。液态玻璃的层级。界面让路，让声音说话。",
+    // Story 1 — transcription
+    "story.t.eyebrow":        "每一句，都留下",
+    "story.t.title.em":       "每一句话",
+    "story.t.title.after":    "，落成文字。",
+    "story.t.body":           "三小时的对话里，最打动你的那句往往不在你以为的时间点。Pode 给每一集生成完整字幕 —— 在你的 Mac 本地跑，或者通过你自己的 AI 服务 —— 让那些你想回去找的瞬间，可搜索、可引用、属于你。",
+    "feat.transcribe.stage":  "转录中 · 47%",
 
-    // Features
-    "features.eyebrow":       "里面装着什么",
-    "features.title.before":  "一个认真的工具，外面是一层",
-    "features.title.em":      "柔软",
-    "features.title.after":   "的壳。",
+    // Story 2 — highlights
+    "story.h.eyebrow":        "更安静的资料库",
+    "story.h.title.before":   "留得下来的",
+    "story.h.title.em":       "句子",
+    "story.h.title.after":    "。",
+    "story.h.body":           "右键任意字幕行就能保存。高亮以书签的形式出现在时间轴上，汇成你的私人 canon，慢慢织出一张你反复回到的想法地图 —— 来自你的收听，不是别人的算法。",
+    "story.h.quote":          "改变你的不是答案 —— 是你意识到问题本身错了的那个瞬间。",
+    "story.h.quote.attr":     "— 聊聊 Agent、边界、与注意力 · 00:42:18",
+    "story.h.chip1":          "Language Agent",
+    "story.h.chip2":          "第一性原理",
+    "story.h.chip3":          "注意力",
+    "story.h.chip4":          "工具，不是机器人",
 
-    "feat.scrubber.title":    "章节时间线",
-    "feat.scrubber.body":     "Pode 从节目简介里解析章节时间戳 —— bullet 列表、括号、全角冒号都吃 —— 把它们排成进度条上的小点。鼠标悬停看章节标题，点击跳转。",
-
-    "feat.queue.title":       "会听你的队列",
-    "feat.queue.body":        "真正的播放队列，持久化到 SwiftData。订阅节目的新单集刷新时自动升到「插队」位置。点播任意 episode 它就升到队首，之前那个不会丢，排在后面。",
+    // Story 3 — queue
+    "story.q.eyebrow":        "下一首已经在路上",
+    "story.q.title.before":   "一个真正",
+    "story.q.title.em":       "听你的",
+    "story.q.title.after":    "队列。",
+    "story.q.body":           "点播任意一集，它就是下一首 —— 今晚剩下的时间排在它后面。拖拽换序。给一档节目加星，新一集出来就安静地排进队列。顺序属于你，不属于推荐引擎。",
     "feat.queue.now":         "正在播放",
     "feat.queue.up1":         "库克的道德锚点",
     "feat.queue.up2":         "十字路口：蔡康永",
 
-    "feat.transcribe.title":  "本地或云端转录",
-    "feat.transcribe.body":   "WhisperKit 在设备上跑 Small / Medium / Large-v3-Turbo 模型。或用 OpenAI Whisper API。Pode 负责模型下载、缓存，以及下载中断时的自动修复。",
-    "feat.transcribe.stage":  "转录中 · 47%",
-
-    "feat.ai.title":          "按你的方式做 AI 摘要",
-    "feat.ai.body":           "自带 API key —— Anthropic Claude、OpenAI、Google Gemini，或任何 OpenAI 兼容服务。摘要、要点、概念提取、向字幕提问，统一在一个供应商切换之下。Key 不会离开你的 Mac。",
-    "feat.ai.summary":        "摘要",
-    "feat.ai.takeaways":      "要点",
-    "feat.ai.ask":            "提问",
-    "feat.ai.text":           "本期对谈中，苏煜梳理了 Agent 的技术脉络 —— 从 1960 年代的逻辑代理，到神经代理，再到今天的语言代理 —— 并提出最有意思的…",
-    "feat.ai.chip1":          "Language Agent",
-    "feat.ai.chip2":          "语义解析",
-    "feat.ai.chip3":          "工具使用",
-
-    // Also
-    "also.eyebrow":           "盒子里还有",
-    "also.1.title":           "从 Apple Podcasts 订阅",
-    "also.1.body":            "按地区 + 分类浏览 iTunes 目录，或直接粘 RSS URL。内置人工精选的 AI 编辑推荐。",
-    "also.2.title":           "属于你的高亮",
-    "also.2.body":            "右键任意字幕行保存为高亮。在进度条上以书签出现，episode 页有专门的高亮 tab。",
-    "also.3.title":           "中英双语界面",
-    "also.3.body":            "界面完整支持英文和简体中文。AI 摘要也跟随你设定的语言。",
-    "also.4.title":           "自动刷新",
-    "also.4.body":            "后台每 30 分钟轮询一次。订阅节目的新单集会安静地出现在你的队列里。",
-    "also.5.title":           "概念图谱",
-    "also.5.body":            "AI 从所有转录过的 episode 中提取的概念汇总成一张个人知识地图。",
-    "also.6.title":           "沙盒 + 公证",
-    "also.6.body":            "开启 App Sandbox、Hardened Runtime，已通过 Apple 公证。双击即开 —— 没有 Gatekeeper 警告。",
+    // Story 4 — interface
+    "story.i.eyebrow":        "为听设计",
+    "story.i.title.before":   "让路的",
+    "story.i.title.em":       "界面",
+    "story.i.title.after":    "。",
+    "story.i.body":           "纸张般温暖的画布。意大利斜体的标题。液态玻璃表面，透出底下一丝暖光。每一屏的设计都贴着真实使用场景 —— 听一段，找一句，做点笔记，往下走。",
+    "story.i.tail":           "没有广告。不追踪。不订阅。AI 摘要按需开启，用你自己的 API key —— 想用再用。",
+    "story.i.pillTitle":      "聊聊 Agent、边界、与注意力",
 
     // CTA
     "cta.eyebrow":            "准备好了？",
     "cta.title.em":           "免费",
     "cta.title.after":        "。本地。属于你。",
-    "cta.sub":                "无需账号。不追踪。不订阅。需要 AI 功能时自带 API key —— 或者不带。",
+    "cta.sub":                "一个长成了样子的周末项目。一个人做的，在 Mac 上，给那些还相信长内容音频的人。",
     "cta.btn":                "下载 Pode 0.2.0",
-    "cta.req":                "macOS 14 (Sonoma) 或更高 · Apple Silicon · 已通过 Apple 公证",
+    "cta.req":                "macOS 14 及以上 · Apple Silicon",
 
     // Footer
-    "footer.tagline":         "podcasts, transcribed",
+    "footer.tagline":         "podcasts, with presence",
     "footer.copy":            "© steve studio · 在 Mac 上做的。",
 };
 
-/** Original English strings, captured from the DOM on first apply.
- *  We snapshot once so flipping back to EN doesn't need to be hard-coded. */
+/** Original English strings, captured from the DOM on first apply. */
 let EN = null;
 
-/** Apply translations to all `data-i18n` elements based on current lang.
- *  EN path uses the snapshot of original HTML; ZH uses the map above. */
 function applyLang(lang) {
     document.documentElement.lang = lang === "zh" ? "zh-Hans" : "en";
     document.documentElement.setAttribute("data-lang", lang);
 
     if (EN === null) {
-        // First call — snapshot every node's English text in document order.
         EN = {};
         for (const el of document.querySelectorAll("[data-i18n]")) {
             EN[el.getAttribute("data-i18n")] = el.textContent;
@@ -137,12 +110,9 @@ function applyLang(lang) {
     for (const el of document.querySelectorAll("[data-i18n]")) {
         const key = el.getAttribute("data-i18n");
         const txt = table[key];
-        if (txt !== undefined) {
-            el.textContent = txt;
-        }
+        if (txt !== undefined) el.textContent = txt;
     }
 
-    // Toggle visual state on the two-half pill.
     for (const opt of document.querySelectorAll("[data-lang-opt]")) {
         if (opt.getAttribute("data-lang-opt") === lang) {
             opt.setAttribute("data-lang-active", "");
@@ -152,7 +122,6 @@ function applyLang(lang) {
     }
 }
 
-/** Initial lang resolution: explicit user choice > browser locale. */
 function initialLang() {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved === "zh" || saved === "en") return saved;

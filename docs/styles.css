@@ -849,7 +849,89 @@ em {
     border-radius: var(--radius-pill);
 }
 
-/* ─────  Also section (bento)  ───── */
+/* ─────  Manifesto  ───── */
+/* A single centered paragraph between the hero and the feature stories.
+   Reads like the opening paragraph of a printed essay — wider line height,
+   more breathing room, no card surface around it. */
+.section--manifesto {
+    padding-top: 60px;
+    padding-bottom: 60px;
+}
+.manifesto {
+    max-width: 720px;
+    margin: 0 auto;
+    text-align: center;
+}
+.manifesto .eyebrow {
+    margin-bottom: 22px;
+}
+.manifesto__body {
+    font-family: var(--serif);
+    font-size: 22px;
+    line-height: 1.55;
+    color: var(--ink-secondary);
+    font-style: italic;
+}
+@media (max-width: 700px) {
+    .manifesto__body { font-size: 18px; }
+}
+
+/* ─────  Canon-quote (Story 2 visual)  ───── */
+/* Magazine-style pull quote — oversize opening mark, serif italic body,
+   small monospaced attribution. */
+.feature__visual--canon {
+    gap: 18px;
+}
+.canon-quote {
+    position: relative;
+    padding-left: 28px;
+}
+.canon-quote__mark {
+    position: absolute;
+    top: -22px;
+    left: -4px;
+    font-family: var(--serif);
+    font-size: 78px;
+    line-height: 1;
+    color: var(--accent);
+    opacity: 0.55;
+    font-style: italic;
+}
+.canon-quote p {
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 19px;
+    line-height: 1.45;
+    color: var(--ink-primary);
+    margin-bottom: 12px;
+}
+.canon-quote small {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink-tertiary);
+    letter-spacing: 0.04em;
+}
+.canon-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+/* CJK refinement — the giant decorative `"` reads weird at large sizes
+   in Chinese context. Use a Chinese left curly quote instead. */
+html[data-lang="zh"] .canon-quote__mark::before {
+    content: "「";
+}
+html[data-lang="zh"] .canon-quote__mark {
+    /* Hide the literal " character and replace with the ::before */
+    font-size: 0;
+}
+html[data-lang="zh"] .canon-quote__mark::before {
+    font-size: 78px;
+}
+
+/* ─────  Also section (bento) — retained for any future use  ───── */
 .also {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
