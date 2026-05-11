@@ -418,10 +418,7 @@ final class TranscribeStore {
         // by every segment within a chunk, so using it as a unique key
         // would silently drop all-but-one segment per chunk (the original
         // streaming bug). `(seek, startMillis)` is unique per segment.
-        // `episodeID` is captured separately so async hops back to
-        // MainActor don't need to retain the Episode.
         struct SegmentKey: Hashable { let seek: Int; let startMillis: Int }
-        let episodeID = episode.id
         let seenLock = NSLock()
         nonisolated(unsafe) var seenKeys: Set<SegmentKey> = []
 
@@ -467,7 +464,7 @@ final class TranscribeStore {
                         }
                     }
                 },
-                onSegment: { segments in
+                onSegment: { [weak self] segments in
                     // Filter to segments we haven't seen yet. Compound
                     // key (seek + start) is unique per segment; using
                     // seek alone collapses chunks.
@@ -485,63 +482,71 @@ final class TranscribeStore {
                     }()
                     guard !fresh.isEmpty else { return }
 
-                    // Insert via the same ctx that owns the Episode. The
-                    // outer @MainActor wrapper guarantees we're on the
-                    // right actor for SwiftData. `lineIndex` is no longer
-                    // a sort key (display sorts by t) — we just need it
-                    // unique per row for SwiftUI ForEach identity. The
-                    // (seek, startMillis) composite hashed into an Int
-                    // gives us that.
-                    let toInsert = fresh.map { seg -> TranscriptLineModel in
+                    // Convert to in-memory StreamLine rows and append to
+                    // the job's sorted buffer. NO SwiftData writes during
+                    // streaming — they were the source of the main-thread
+                    // melt (each insert kicked the @Query, every observer
+                    // re-rendered, sortedTranscriptLines re-sorted, etc).
+                    let toInsert: [StreamLine] = fresh.map { seg in
                         let text = settings.simplifiedChinese
                             ? Fmt.toSimplifiedChinese(seg.text) : seg.text
                         let lineId = seg.seek &* 10_000 &+ Int(seg.start * 1000)
-                        return TranscriptLineModel(
-                            t: seg.t, text: text, speaker: nil,
-                            lineIndex: lineId
-                        )
+                        return StreamLine(id: lineId, t: seg.t,
+                                          text: text, speaker: nil)
                     }
-                    // Refetch episode by ID inside the ctx to avoid
-                    // dangling-reference issues across actor hops.
-                    let descriptor = FetchDescriptor<Episode>(
-                        predicate: #Predicate<Episode> { $0.id == episodeID }
-                    )
-                    guard let ep = try? ctx.fetch(descriptor).first else { return }
-                    for line in toInsert {
-                        line.episode = ep
-                        ctx.insert(line)
+                    self?.update(jobID) { job in
+                        job.appendStreaming(toInsert)
                     }
-                    try? ctx.save()
                 }
             )
         } catch {
-            // Cancellation or pipeline failure: wipe any streamed lines
-            // so the episode doesn't end up in a half-transcribed state
-            // (`transcribed=false` but rows present).
+            // Cancellation or pipeline failure: drop any streamed rows
+            // so the episode doesn't end up in a half-transcribed state.
+            // SwiftData is untouched during streaming (Phase B), so the
+            // only thing to clear is the in-memory job buffer.
+            update(jobID) { $0.streamingLines = [] }
             for line in episode.transcriptLines { ctx.delete(line) }
             try? ctx.save()
             throw error
         }
 
-        // Safety-net reconciliation. The stream is our PRIMARY source,
-        // but WhisperKit's final `result.lines` is the canonical list
-        // (post-`updateSeekOffsetsForResults`, post-merge). Walk the
-        // final list and insert any line that's missing from what we
-        // streamed — guards against onSegment misses (callback
-        // ordering, late-arriving post-merge segments, etc).
-        reconcileWithFinalResult(
-            episode: episode, finalLines: result.lines,
-            settings: settings, ctx: ctx
-        )
+        // ── Persist phase ────────────────────────────────────────────
+        // Single batch insert into SwiftData. WhisperKit's `result.lines`
+        // is canonical (post-merge, post-offset-adjustment), so we
+        // persist from that — no per-segment inserts, no @Query refresh
+        // storm. One save at the end is dramatically cheaper than the
+        // previous "save per onSegment batch" pattern.
+        update(jobID) { $0.stage = .finalizing; $0.stageProgress = 0.2 }
 
-        // Light cleanup before flipping `transcribed = true`: drop
-        // adjacent same-text lines (chunk-boundary duplicates that
-        // sneak through both stream + reconcile passes).
-        cleanupAfterStream(episode: episode, ctx: ctx)
+        // Drop any pre-existing rows (e.g. from a previously-failed
+        // attempt that left orphans).
+        for line in episode.transcriptLines { ctx.delete(line) }
+
+        // Insert + dedup-by-text-adjacent in the same pass, so we
+        // don't have to run a separate cleanup query afterwards. VAD
+        // can emit two segments with identical text at a chunk
+        // boundary; we keep the first.
+        var prevText: String? = nil
+        for (idx, line) in result.lines.enumerated() {
+            let text = settings.simplifiedChinese
+                ? Fmt.toSimplifiedChinese(line.text) : line.text
+            if let pt = prevText, pt == text { continue }
+            let m = TranscriptLineModel(
+                t: line.t, text: text, speaker: line.speaker,
+                lineIndex: idx
+            )
+            m.episode = episode
+            ctx.insert(m)
+            prevText = text
+        }
 
         episode.transcribed = true
         episode.transcribedAt = .now
         try? ctx.save()
+
+        // Streaming buffer no longer needed — UI will source from
+        // SwiftData via the cached @State in EpisodeView from here on.
+        update(jobID) { $0.streamingLines = [] }
 
         let lineCount = episode.transcriptLines.count
 
@@ -598,75 +603,36 @@ final class TranscribeStore {
         update(jobID) { $0.stage = .finalizing; $0.stageProgress = 1 }
     }
 
-    /// Post-stream cleanup. Streaming is the source of truth for content,
-    /// but the VAD pipeline can emit two segments with identical text at a
-    /// chunk boundary (one from each side). Sort by t, drop the second of
-    /// any adjacent same-text pair.
-    private func cleanupAfterStream(episode: Episode, ctx: ModelContext) {
-        let sorted = episode.transcriptLines.sorted { $0.t < $1.t }
-        var prevText: String? = nil
-        for line in sorted {
-            if let pt = prevText, pt == line.text {
-                ctx.delete(line)
-                continue
-            }
-            prevText = line.text
-        }
-    }
-
-    /// Safety net for the streaming path. WhisperKit's final return is
-    /// the canonical transcript — post-merge, post-offset-adjust. If a
-    /// segment never reached our `onSegment` callback (rare but
-    /// possible: callback throttling, late post-processing inserts),
-    /// we still want it in the saved transcript.
-    ///
-    /// Match policy: for each line in `finalLines`, check whether
-    /// there's already a saved TranscriptLineModel within ±0.5s. If
-    /// not, insert it. Tolerance of 0.5s absorbs the small precision
-    /// difference between streamed t (`seek/sampleRate + start`) and
-    /// final t (`floor(absolute_start)`), without merging legitimate
-    /// adjacent sentences that happen to be close.
-    private func reconcileWithFinalResult(
-        episode: Episode,
-        finalLines: [WhisperLine],
-        settings: AppSettings,
-        ctx: ModelContext
-    ) {
-        // Sort existing once; binary-search-friendly enough for the
-        // common case (a few hundred to ~2000 lines).
-        let existing = episode.transcriptLines.sorted { $0.t < $1.t }
-        let tolerance: Double = 0.5
-        var inserted = 0
-        // Reconciled rows get a high-offset lineIndex so they can't
-        // collide with streamed rows (whose lineIndex uses the
-        // seek-based formula yielding values up to ~10^11 for very
-        // long episodes). 10^13 is comfortably above that ceiling.
-        let reconcileBase = 10_000_000_000_000
-        for (idx, line) in finalLines.enumerated() {
-            // O(log n) reach for the nearest existing t. Linear scan is
-            // fine here — finalLines is small (~few hundred).
-            let hasNear = existing.contains { abs($0.t - line.t) <= tolerance }
-            if hasNear { continue }
-            let text = settings.simplifiedChinese
-                ? Fmt.toSimplifiedChinese(line.text) : line.text
-            let m = TranscriptLineModel(
-                t: line.t, text: text, speaker: line.speaker,
-                lineIndex: reconcileBase + idx
-            )
-            m.episode = episode
-            ctx.insert(m)
-            inserted += 1
-        }
-        if inserted > 0 {
-            try? ctx.save()
-        }
-    }
+    // Note: `cleanupAfterStream` and `reconcileWithFinalResult` were
+    // removed alongside Phase B's batch-persist rewrite. With
+    // `result.lines` (WhisperKit's canonical post-merge output) as the
+    // single persistence source, both passes are redundant — adjacent
+    // duplicate-text dedup happens inline in the batch insert above,
+    // and there's nothing to reconcile against because streaming no
+    // longer touches SwiftData.
 
     private func update(_ id: String, mutate: (inout TranscribeJob) -> Void) {
         guard var j = jobs[id] else { return }
         mutate(&j)
         jobs[id] = j
     }
+}
+
+/// Lightweight value type for an in-flight transcript row. During
+/// streaming the UI binds directly to `TranscribeJob.streamingLines`,
+/// avoiding the SwiftData @Query refresh storm that hit every body
+/// re-eval when each segment was being inserted live. Once the stream
+/// finishes the canonical `WhisperResult.lines` is batch-persisted
+/// into SwiftData in a single transaction.
+struct StreamLine: Identifiable, Equatable, Sendable {
+    let id: Int            // stable unique row identity (= old `lineIndex`)
+    let t: Double          // absolute seconds in the audio
+    let text: String
+    let speaker: String?
+
+    /// Backward-compat alias so call sites that still think in terms
+    /// of `lineIndex` (highlight ids, scroll target keys) keep working.
+    var lineIndex: Int { id }
 }
 
 @MainActor
@@ -692,6 +658,32 @@ struct TranscribeJob {
     var error: String? = nil
     /// `nil` once the pipeline terminates.
     var task: Task<Void, Never>? = nil
+    /// In-memory streamed transcript rows, kept sorted by `t`. The
+    /// transcript pane binds to this directly while the job is alive,
+    /// so segments don't have to round-trip through SwiftData (which
+    /// previously triggered a @Query refresh per segment, melting the
+    /// main thread). Cleared in `.finalizing` once persisted.
+    var streamingLines: [StreamLine] = []
+
+    /// Insertion-sorted append. `segments` arrives out of order from
+    /// parallel VAD workers, so we walk an O(log n) binary search to
+    /// find the slot and splice in. Batches of segments are typically
+    /// 1-30 rows, so the overall pass is cheap.
+    mutating func appendStreaming(_ rows: [StreamLine]) {
+        for row in rows {
+            // Skip dupes by lineIndex — defence against the rare case
+            // where WhisperKit emits a post-merge segment with the same
+            // (seek, start) we've already accepted.
+            if streamingLines.contains(where: { $0.id == row.id }) { continue }
+            // Binary search for insertion point by t.
+            var lo = 0, hi = streamingLines.count
+            while lo < hi {
+                let mid = (lo + hi) / 2
+                if streamingLines[mid].t < row.t { lo = mid + 1 } else { hi = mid }
+            }
+            streamingLines.insert(row, at: lo)
+        }
+    }
 
     /// Unified 0..1 progress across the whole pipeline. Each stage owns a
     /// slice so the bar fills monotonically from start to finish.

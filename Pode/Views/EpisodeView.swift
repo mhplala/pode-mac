@@ -49,6 +49,26 @@ struct EpisodeView: View {
     @State private var confirmDeleteTranscript = false
     @State private var confirmRemoveDownload = false
 
+    // ─── Perf: cached transcript display state ────────────────────────
+    // The transcript pane used to read `ep.sortedTranscriptLines` and
+    // `activeLineKey(...)` directly inside body, both of which re-sorted
+    // / re-scanned the whole array on every body re-eval. With 300+ rows
+    // × 60fps player ticks that produced 6-8 ms of main-thread work per
+    // frame — visible playback jitter and a frozen UI during streaming.
+    //
+    // Now: we cache the sorted SwiftData rows in @State (refreshed only
+    // when the row count actually changes), and the "current active
+    // line" is updated by an .onChange off player.currentTime — keeping
+    // the body's tracked Observable set clean of per-tick deps so it
+    // re-renders only when the active line actually crosses.
+    @State private var sortedCache: [StreamLine] = []
+    @State private var activeLineIdx: Int = -1
+    /// Wall-clock time of the last auto-scroll. We skip back-to-back
+    /// scrollTo calls within 0.4s so a fast burst of active-line
+    /// transitions doesn't stack into a fighting set of animations
+    /// inside the ScrollView.
+    @State private var lastScrollAt: Date = .distantPast
+
     init(episodeId: String) {
         self.episodeId = episodeId
         _episodes = Query(filter: #Predicate<Episode> { $0.id == episodeId })
@@ -677,25 +697,28 @@ struct EpisodeView: View {
                 // 12 lines …). That feels broken even though the data
                 // is correct.
                 //
-                // While the transcribe job is live, render only the
-                // *contiguous prefix*: the longest run of lines starting
-                // at the first one where adjacent gaps are reasonable.
-                // As earlier chunks fill in, the prefix lengthens
-                // naturally — the user reads the audio linearly even
-                // though we're computing it in parallel. Once the job
-                // ends, the cleanupAfterStream pass has run and we
-                // show everything.
-                let sorted = ep.sortedTranscriptLines
-                let visible = transcribing
-                    ? contiguousPrefix(of: sorted)
-                    : sorted
-                let activeIdx = activeIndex(in: visible, ep: ep)
-                ForEach(Array(visible.enumerated()), id: \.element.lineIndex) { i, line in
+                // Source the display list from the right place:
+                //   - transcribing → the in-memory streamingLines on the
+                //     TranscribeJob (no SwiftData round-trip, no @Query
+                //     refresh storm).
+                //   - else → the cached sorted SwiftData rows (refreshed
+                //     only when the row count actually changes, not on
+                //     every body re-eval).
+                let visible: [StreamLine] = {
+                    if transcribing, let job = transcribeJob {
+                        return contiguousPrefix(of: job.streamingLines)
+                    }
+                    return sortedCache
+                }()
+                let totalCount = transcribing
+                    ? (transcribeJob?.streamingLines.count ?? 0)
+                    : sortedCache.count
+                ForEach(visible, id: \.id) { line in
                     TranscriptRow(
                         time: line.t,
                         speaker: line.speaker,
                         text: line.text,
-                        isActive: i == activeIdx,
+                        isActive: line.id == activeLineId(in: visible),
                         onTap: {
                             if store.player.currentEpisodeID != ep.id {
                                 store.startPlaying(ep)
@@ -719,7 +742,9 @@ struct EpisodeView: View {
                 }
                 // Skeleton placeholders while we're waiting for either
                 // (a) the very first lines, or (b) earlier chunks to fill
-                // in behind a contiguous-prefix gap.
+                // in behind a contiguous-prefix gap. Strictly gated on
+                // `transcribing` so no shimmer animation outlives the
+                // pipeline.
                 if transcribing {
                     if visible.isEmpty {
                         // Whole first stretch is still decoding — 4 rows.
@@ -731,7 +756,7 @@ struct EpisodeView: View {
                         .padding(.horizontal, 24)
                         .padding(.top, 16)
                         .transition(.opacity)
-                    } else if visible.count < sorted.count {
+                    } else if visible.count < totalCount {
                         // Some lines arrived but a later batch hasn't.
                         VStack(spacing: 0) {
                             ForEach(0..<2, id: \.self) { _ in
@@ -745,41 +770,102 @@ struct EpisodeView: View {
                 }
             }
             .padding(.horizontal, 24)
-            .padding(.vertical, ep.transcriptLines.isEmpty ? 0 : 24)
-            // Drives the row-level insertion animations on the
-            // TranscriptRow ForEach above + the skeleton fade-outs.
-            // Without a value-bound `.animation(...)`, SwiftUI can't
-            // tell when to play `.transition`.
-            .animation(.easeOut(duration: 0.28), value: ep.transcriptLines.count)
+            .padding(.vertical, ep.transcriptLines.isEmpty && (transcribeJob?.streamingLines.isEmpty ?? true) ? 0 : 24)
+            // Drives the row-level insertion animations + skeleton
+            // fade-outs. We key on the relevant count for the active
+            // source so the animation actually fires on inserts.
+            .animation(.easeOut(duration: 0.28),
+                       value: transcribing
+                           ? (transcribeJob?.streamingLines.count ?? 0)
+                           : sortedCache.count)
         }
-        // Auto-scroll only fires when the active line actually changes.
-        // Earlier we tried ticking on every player update — that ran
-        // `scrollTo` ~2× a second on the same row, each one nudging
-        // SwiftUI through its layout pass and producing a visible
-        // jitter (the "flicker"). Keying off the resolved active line
-        // means at most one scroll per several seconds, exactly when
-        // the audio crosses into a new transcript line.
-        .onChange(of: activeLineKey(in: ep)) { _, newKey in
-            guard let newKey, store.player.currentEpisodeID == ep.id else { return }
-            // `.smooth` is Apple's modern scroll-like easing curve.
-            // 0.55s feels paced for line-by-line glide; `extraBounce:
-            // 0` keeps it from overshooting and settling jitter-free.
-            withAnimation(.smooth(duration: 0.55, extraBounce: 0)) {
-                proxy.scrollTo(newKey, anchor: .center)
-            }
+        // Refresh the cached sorted snapshot only on row-count changes
+        // or when we transition out of transcribing. This is the ONLY
+        // sort we do — body never sorts.
+        .onChange(of: ep.transcriptLines.count) { _, _ in refreshSortedCache(ep: ep) }
+        .onChange(of: transcribing) { _, _ in refreshSortedCache(ep: ep) }
+        .onAppear { refreshSortedCache(ep: ep) }
+        // Active-line tracking: update @State once when the player
+        // crosses a line boundary. By moving this OUT of body we stop
+        // tracking player.currentTime as a body dep, which is the main
+        // reason the view used to re-render 60×/sec during playback.
+        .onChange(of: store.player.currentTime) { _, _ in
+            updateActiveLine(proxy: proxy, ep: ep)
+        }
+        .onChange(of: activeLineIdx) { _, _ in
+            // Active line changed → fire one throttled scroll.
+            performAutoScroll(proxy: proxy, ep: ep)
         }
         .frame(height: tabContentHeight)
         }
     }
 
-    /// The `lineIndex` of whichever transcript row matches the current
-    /// playback time on this episode — used as a scroll-to key. Returns
-    /// nil when nothing's playing or the transcript hasn't loaded yet.
-    private func activeLineKey(in ep: Episode) -> Int? {
-        guard store.player.currentEpisodeID == ep.id else { return nil }
+    /// Pull the current sorted snapshot from SwiftData once and stash
+    /// it as a value-type [StreamLine]. Called only on count change /
+    /// transcribing flip / first appearance — never per frame.
+    private func refreshSortedCache(ep: Episode) {
+        let rows = ep.transcriptLines.sorted { $0.t < $1.t }
+        sortedCache = rows.map { m in
+            StreamLine(id: m.lineIndex, t: m.t,
+                       text: m.text, speaker: m.speaker)
+        }
+        // Reset active so the next currentTime tick recomputes against
+        // the fresh list.
+        activeLineIdx = -1
+    }
+
+    /// Binary-search the active line for the current player time.
+    /// O(log n) per call instead of the old `last(where:)` linear scan.
+    /// Writes to `@State` so body re-renders only when the index
+    /// actually changes (i.e. when audio crosses a line boundary, not
+    /// every player tick).
+    private func updateActiveLine(proxy: ScrollViewProxy, ep: Episode) {
+        guard store.player.currentEpisodeID == ep.id else {
+            if activeLineIdx != -1 { activeLineIdx = -1 }
+            return
+        }
+        let lines: [StreamLine] = transcribing
+            ? (transcribeJob?.streamingLines ?? [])
+            : sortedCache
+        guard !lines.isEmpty else {
+            if activeLineIdx != -1 { activeLineIdx = -1 }
+            return
+        }
         let now = store.player.currentTime
-        let sorted = ep.sortedTranscriptLines
-        return sorted.last(where: { now >= $0.t })?.lineIndex
+        var lo = 0, hi = lines.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if lines[mid].t <= now { lo = mid + 1 } else { hi = mid }
+        }
+        let idx = lo - 1
+        if idx != activeLineIdx { activeLineIdx = idx }
+    }
+
+    /// Throttled auto-scroll. Called on activeLineIdx change. Skips
+    /// the scroll if we just animated within the last 0.4 s — back-to-
+    /// back animations on the same ScrollView fight each other and
+    /// produce visible jitter.
+    private func performAutoScroll(proxy: ScrollViewProxy, ep: Episode) {
+        guard activeLineIdx >= 0,
+              store.player.currentEpisodeID == ep.id else { return }
+        let now = Date()
+        if now.timeIntervalSince(lastScrollAt) < 0.4 { return }
+        let lines: [StreamLine] = transcribing
+            ? (transcribeJob?.streamingLines ?? [])
+            : sortedCache
+        guard activeLineIdx < lines.count else { return }
+        let key = lines[activeLineIdx].id
+        lastScrollAt = now
+        withAnimation(.smooth(duration: 0.55, extraBounce: 0)) {
+            proxy.scrollTo(key, anchor: .center)
+        }
+    }
+
+    /// Helper for the row's `isActive` — accepts the visible list so
+    /// it works against either streaming or cached source.
+    private func activeLineId(in visible: [StreamLine]) -> Int? {
+        guard activeLineIdx >= 0, activeLineIdx < visible.count else { return nil }
+        return visible[activeLineIdx].id
     }
 
     /// Human-readable model label for the transcribing banner. Cloud
@@ -903,36 +989,26 @@ struct EpisodeView: View {
         .frame(height: tabContentHeight)
     }
 
-    private func activeIndex(in sorted: [TranscriptLineModel], ep: Episode) -> Int {
-        guard store.player.currentEpisodeID == ep.id else { return -1 }
-        let now = store.player.currentTime
-        return sorted.lastIndex(where: { now >= $0.t }) ?? -1
-    }
-
-    /// Truncate a sorted-by-t transcript to the longest contiguous prefix
-    /// — useful while transcription is still streaming, so users see lines
-    /// fill in linearly from the start rather than scattered across the
-    /// timeline as parallel VAD workers report out of order.
+    /// Truncate a sorted-by-t streaming list to the longest contiguous
+    /// prefix — useful while transcription is still streaming, so users
+    /// see lines fill in linearly from the start rather than scattered
+    /// across the timeline as parallel VAD workers report out of order.
     ///
-    /// Threshold tuning: 8s strikes the right line between two failure
-    /// modes —
-    ///   * Too generous (>20s): chunk-boundary gaps where workers haven't
-    ///     reported back yet slip through the filter, the user sees
-    ///     visible blank stretches inside the rendered transcript and
-    ///     it looks like sentences got skipped.
-    ///   * Too tight (<3s): real conversational pauses between turns
-    ///     (~3-6s is common when speakers switch) get cut off and the
-    ///     prefix stops short.
-    /// 8s catches everything past a natural pause; chunk gaps are
-    /// always 30s+ (default chunk size), so they fall well outside.
+    /// Threshold tuning: 22s sits comfortably under the default 30s
+    /// chunk window (so a missing chunk's gap correctly blocks the
+    /// display) while leaving enough room for natural in-chunk silences
+    /// — long conversational pauses, theme-music interludes, breath
+    /// gaps in slow podcasts. The earlier 8s threshold was too tight:
+    /// any 8-30s in-chunk silence would falsely halt the display at a
+    /// position like "15:37" with the rest of the chunk already decoded.
     ///
     /// If the prefix is artificially truncated by a still-decoding gap,
     /// the cut content reappears once `transcribing == false` (caller
-    /// shows the full sorted list then).
+    /// shows the full cached list then).
     private func contiguousPrefix(
-        of sorted: [TranscriptLineModel],
-        maxGapSeconds: Double = 8
-    ) -> [TranscriptLineModel] {
+        of sorted: [StreamLine],
+        maxGapSeconds: Double = 22
+    ) -> [StreamLine] {
         guard let first = sorted.first else { return [] }
         // If the earliest emitted line is already deep into the audio
         // (chunks 0..N haven't reported back, but chunk N+k has), don't
@@ -940,7 +1016,7 @@ struct EpisodeView: View {
         // 45s buffer covers normal VAD-stripped intros without false
         // positives on legit late starts.
         if first.t > 45 { return [] }
-        var out: [TranscriptLineModel] = [first]
+        var out: [StreamLine] = [first]
         var prevT = first.t
         for line in sorted.dropFirst() {
             if line.t - prevT > maxGapSeconds { break }
