@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import AppKit  // for NSEvent local monitor (user-scroll detection)
 
 struct EpisodeView: View {
     @Environment(\.brandAccent) private var accent: Color
@@ -69,15 +70,18 @@ struct EpisodeView: View {
     /// animations inside the ScrollView.
     @State private var lastScrollAt: Date = .distantPast
 
-    /// Transient scroll-detection state. Lives in a plain class (NOT
-    /// @State / @Observable) on purpose: `.scrollPosition(id:)` writes
-    /// the anchor every time a row crosses the center, which on a
-    /// 2400-line transcript fires 20+ times per second during a user
-    /// scroll gesture. If those writes hit @State, the entire
-    /// EpisodeView body invalidates 20×/sec and we crush the main
-    /// thread re-diffing 2400 LazyVStack children. A plain class is
-    /// invisible to SwiftUI tracking — same data, zero invalidation.
+    /// "User last scrolled at" timestamp lives in a plain class so
+    /// the NSEvent monitor's writes don't invalidate any SwiftUI
+    /// view bodies. `performAutoScroll` reads from this each time
+    /// the active line changes; if user scrolled in the last 5s,
+    /// it skips its scroll.
     @State private var scrollState = TranscriptScrollState()
+    /// NSEvent local-monitor token for `.scrollWheel`. Installed on
+    /// appear, removed on disappear. Captures real trackpad / mouse
+    /// scrolls; programmatic proxy.scrollTo doesn't generate these
+    /// events, so the distinction is clean — no settling window
+    /// hack needed.
+    @State private var scrollWheelMonitor: Any? = nil
 
     init(episodeId: String) {
         self.episodeId = episodeId
@@ -825,35 +829,12 @@ struct EpisodeView: View {
                        value: (transcribeJob?.streamingLines.isEmpty ?? true)
                            ? sortedCache.count
                            : (transcribeJob?.streamingLines.count ?? 0))
-            // Mark this stack as the scroll target so .scrollPosition(id:)
-            // can observe which row is anchored. Lets us distinguish
-            // user-driven scrolls from our own proxy.scrollTo settling.
-            .scrollTargetLayout()
         }
-        // Bind .scrollPosition through a manual Binding that targets
-        // our plain TranscriptScrollState class. The setter mutates
-        // the class directly (NOT @State), so SwiftUI doesn't
-        // invalidate EpisodeView body on every row-crossing — which
-        // would otherwise fire 20+ times/sec during a user scroll
-        // gesture and choke the main thread on a 2400-row ForEach.
-        //
-        // User-scroll detection happens inline in the setter: if the
-        // anchor change isn't inside our programmatic-scroll settling
-        // window, stamp `userScrolledAt`. `performAutoScroll` reads
-        // that to suppress auto-scroll for 5s after.
-        .scrollPosition(
-            id: Binding(
-                get: { scrollState.observedAnchor },
-                set: { newValue in
-                    scrollState.observedAnchor = newValue
-                    let now = Date()
-                    if now.timeIntervalSince(scrollState.lastProgrammaticScrollAt) >= 0.9 {
-                        scrollState.userScrolledAt = now
-                    }
-                }
-            ),
-            anchor: .center
-        )
+        // (User-scroll detection now happens via the NSEvent scroll-
+        // wheel monitor installed in .onAppear below. We dropped
+        // .scrollPosition(id:) because it was double-driving the
+        // ScrollView alongside proxy.scrollTo and producing
+        // unwanted phantom auto-scrolls.)
         // Cache refresh triggers. The cache is the ONLY sorted list we
         // build; body never sorts.
         //   - count change: persist phase inserted/deleted rows.
@@ -872,7 +853,11 @@ struct EpisodeView: View {
                 refreshSortedCache(ep: ep)
             }
         }
-        .onAppear { refreshSortedCache(ep: ep) }
+        .onAppear {
+            refreshSortedCache(ep: ep)
+            installScrollWheelMonitor()
+        }
+        .onDisappear { removeScrollWheelMonitor() }
         // Active-line tracking: update @State once when the player
         // crosses a line boundary. By moving this OUT of body we stop
         // tracking player.currentTime as a body dep, which is the main
@@ -964,17 +949,41 @@ struct EpisodeView: View {
         guard activeLineIdx < lines.count else { return }
         let key = lines[activeLineIdx].id
         lastScrollAt = now
-        // Stamp BEFORE triggering the animation so the impending
-        // observedAnchor changes (caused by our own scroll) fall
-        // inside the settling window and don't get classified as
-        // user activity.
-        scrollState.lastProgrammaticScrollAt = now
         PerfCounters.shared.scrollFired()
         // Shorter animation (0.4s) so it ends well within the throttle
-        // window. Less time for the ScrollView to compete with any
-        // user gesture that lands during the animation.
+        // window. NSEvent scroll-wheel monitor only fires on real
+        // user input, so programmatic scrolls here don't get
+        // misclassified as user activity.
         withAnimation(.smooth(duration: 0.4, extraBounce: 0)) {
             proxy.scrollTo(key, anchor: .center)
+        }
+    }
+
+    /// Install a global scroll-wheel monitor that stamps
+    /// `scrollState.userScrolledAt` whenever the user uses the
+    /// trackpad / mouse wheel. The monitor is window-local — events
+    /// in other apps don't reach us. Programmatic scrolls
+    /// (proxy.scrollTo) do NOT generate `.scrollWheel` events, so
+    /// they're cleanly distinguishable from user input without any
+    /// settling-window heuristic.
+    private func installScrollWheelMonitor() {
+        guard scrollWheelMonitor == nil else { return }
+        let state = scrollState   // capture the class ref
+        scrollWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+            // The monitor closure isn't @MainActor-isolated by
+            // signature, but local monitors are dispatched on the
+            // main thread by AppKit. assumeIsolated honors that
+            // without a hop.
+            MainActor.assumeIsolated {
+                state.userScrolledAt = Date()
+            }
+            return event   // pass through, don't consume
+        }
+    }
+    private func removeScrollWheelMonitor() {
+        if let token = scrollWheelMonitor {
+            NSEvent.removeMonitor(token)
+            scrollWheelMonitor = nil
         }
     }
 
@@ -1690,24 +1699,13 @@ struct EpisodeView: View {
 
 }
 
-/// Plain mutable holder for transcript scroll-detection state. NOT
-/// @Observable. Reads from `.scrollPosition(id:)`'s binding setter
-/// mutate this; SwiftUI doesn't see those mutations, so the parent
-/// EpisodeView body does NOT re-evaluate on every scroll-row crossing.
-///
-/// The data this holds:
-///   - `observedAnchor`: which row id is currently at the ScrollView's
-///     center anchor. Updated by SwiftUI via the binding.
-///   - `lastProgrammaticScrollAt`: when we ourselves called scrollTo.
-///     Anchor changes inside the 0.9s window after this don't count
-///     as user activity — they're our own animation settling.
-///   - `userScrolledAt`: when the user last moved the ScrollView with
-///     their own gesture. `performAutoScroll` reads this to suppress
-///     auto-scroll for 5s after.
+/// Plain mutable holder for the "user just scrolled" timestamp. NOT
+/// @Observable, so writes to `userScrolledAt` from the NSEvent
+/// scroll-wheel monitor don't invalidate any SwiftUI view bodies.
+/// `performAutoScroll` reads from this and skips the auto-scroll if
+/// the user scrolled within the last 5s.
 @MainActor
 final class TranscriptScrollState {
-    var observedAnchor: Int? = nil
-    var lastProgrammaticScrollAt: Date = .distantPast
     var userScrolledAt: Date = .distantPast
 }
 
