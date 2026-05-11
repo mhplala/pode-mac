@@ -70,7 +70,32 @@ struct PlayerDockView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .glass(.dock)
+        // SwiftUI's Text views default to the I-beam cursor on macOS
+        // because they're potentially selectable. The dock has lots of
+        // Text (times, titles, transport labels) but none of it should
+        // be selectable — force the arrow cursor across the whole dock.
+        .arrowCursor()
     }
+}
+
+/// View modifier that forces NSCursor.arrow while the pointer is inside
+/// the modified view. Uses push/pop so it stacks cleanly with other
+/// cursor changes (e.g. button hovers).
+private struct ArrowCursorModifier: ViewModifier {
+    @State private var pushed = false
+    func body(content: Content) -> some View {
+        content.onContinuousHover { phase in
+            switch phase {
+            case .active:
+                if !pushed { NSCursor.arrow.push(); pushed = true }
+            case .ended:
+                if pushed { NSCursor.pop(); pushed = false }
+            }
+        }
+    }
+}
+private extension View {
+    func arrowCursor() -> some View { modifier(ArrowCursorModifier()) }
 }
 
 // MARK: - Static-ish parts (don't read currentTime)

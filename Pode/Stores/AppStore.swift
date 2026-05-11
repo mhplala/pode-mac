@@ -40,6 +40,10 @@ final class AppStore {
 
     let player: AudioPlayerStore
 
+    /// Bridges to macOS media-key commands + Space-bar shortcut + the
+    /// system Now Playing info center. Long-lived for the app lifetime.
+    let mediaCommands: MediaCommandsService = MediaCommandsService()
+
     private var modelContext: ModelContext?
 
     // Throttle SwiftData writes during playback. Periodic time observer fires
@@ -50,16 +54,58 @@ final class AppStore {
 
     init(player: AudioPlayerStore) {
         self.player = player
+        mediaCommands.attach(player: player)
         player.onPositionChanged = { [weak self] id, t, dur in
             self?.maybePersistPlaybackPosition(episodeID: id, time: t, duration: dur)
+            self?.pushNowPlayingTime(t)
         }
         player.onFinished = { [weak self] id in
             self?.markFinished(episodeID: id)
+            self?.mediaCommands.clearNowPlaying()
         }
         player.onWillStop = { [weak self] id, t, dur in
             self?.persistPlaybackPosition(episodeID: id, time: t, duration: dur)
             self?.lastPositionSaveAt = .now
+            self?.pushNowPlayingPlayState(isPlaying: false)
         }
+    }
+
+    /// Lightweight tick — just update Now Playing's elapsed time so the
+    /// system scrubber tracks. The richer fields (title / artist / total
+    /// duration) only need to refresh on episode change.
+    private func pushNowPlayingTime(_ t: Double) {
+        // We have no easy way to look up the episode here without a fetch,
+        // so use the cached title/artist set by `pushNowPlayingForEpisode`.
+        mediaCommands.updateNowPlaying(
+            title: mediaCommands.currentTitle,
+            artist: mediaCommands.currentArtist,
+            duration: player.duration,
+            currentTime: t,
+            rate: player.playbackRate,
+            isPlaying: player.isPlaying
+        )
+    }
+
+    private func pushNowPlayingPlayState(isPlaying: Bool) {
+        mediaCommands.updateNowPlaying(
+            title: mediaCommands.currentTitle,
+            artist: mediaCommands.currentArtist,
+            duration: player.duration,
+            currentTime: player.currentTime,
+            rate: player.playbackRate,
+            isPlaying: isPlaying
+        )
+    }
+
+    private func pushNowPlayingForEpisode(_ episode: Episode) {
+        mediaCommands.updateNowPlaying(
+            title: episode.title,
+            artist: episode.show?.title ?? "",
+            duration: episode.duration,
+            currentTime: player.currentTime,
+            rate: player.playbackRate,
+            isPlaying: true
+        )
     }
 
     func attach(_ ctx: ModelContext) {
@@ -398,10 +444,12 @@ final class AppStore {
         try? modelContext?.save()
         if player.currentEpisodeID == episode.id {
             player.play()
+            pushNowPlayingForEpisode(episode)
             return
         }
         player.load(episodeID: episode.id, source: source, startAt: episode.position)
         player.play()
+        pushNowPlayingForEpisode(episode)
     }
 
     func togglePlay(_ episode: Episode) {
