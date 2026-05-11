@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pode — A native macOS podcast client</title>
+    <meta name="description" content="Pode is a native macOS podcast client. Listen, transcribe, summarize — all in one beautifully crafted app.">
+
+    <meta property="og:title" content="Pode — A native macOS podcast client">
+    <meta property="og:description" content="Listen. Transcribe. Summarize. All in one beautifully crafted app.">
+    <meta property="og:image" content="./assets/icon-1024.png">
+    <meta property="og:type" content="website">
+    <meta name="twitter:card" content="summary_large_image">
+
+    <link rel="icon" href="./assets/icon-1024.png">
+    <link rel="apple-touch-icon" href="./assets/icon-1024.png">
+    <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+    <!-- Bloom layer — same warm-orange radial blooms the app uses for its
+         liquid-glass canvas. Two soft blobs in opposing corners. -->
+    <div class="bloom" aria-hidden="true">
+        <div class="bloom__blob bloom__blob--a"></div>
+        <div class="bloom__blob bloom__blob--b"></div>
+    </div>
+
+    <!-- ─────────────────  NAV  ───────────────── -->
+    <nav class="nav">
+        <a class="nav__brand" href="#">
+            <img class="nav__icon" src="./assets/icon-128.png" alt="Pode">
+            <span class="nav__wordmark">pode</span>
+        </a>
+        <div class="nav__right">
+            <button class="lang-toggle" id="lang-toggle" aria-label="Toggle language">
+                <span class="lang-toggle__opt" data-lang-opt="en">EN</span>
+                <span class="lang-toggle__sep">·</span>
+                <span class="lang-toggle__opt" data-lang-opt="zh">中</span>
+            </button>
+            <a class="btn btn--primary nav__cta" href="#download">
+                <span data-i18n="nav.download">Download</span>
+            </a>
+        </div>
+    </nav>
+
+    <!-- ─────────────────  HERO  ───────────────── -->
+    <header class="hero">
+        <div class="hero__inner">
+            <div class="hero__eyebrow" data-i18n="hero.eyebrow">PODCASTS, TRANSCRIBED</div>
+
+            <h1 class="hero__title">
+                <span data-i18n="hero.title.before">Listen with</span>
+                <em data-i18n="hero.title.em">presence</em><span data-i18n="hero.title.after">.</span>
+            </h1>
+
+            <p class="hero__sub" data-i18n="hero.sub">
+                A native macOS podcast client. Smart queue, full-text transcripts,
+                AI summaries — wrapped in a quiet, paper-warm interface that
+                respects your attention.
+            </p>
+
+            <div class="hero__actions">
+                <a class="btn btn--primary btn--lg" href="#download">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px;">
+                        <path d="M7 1.5v8M3.5 6L7 9.5 10.5 6M2 11.5h10"/>
+                    </svg>
+                    <span><span data-i18n="hero.cta.primary">Download for Mac</span> · <span class="mono">v0.2.0</span></span>
+                </a>
+                <a class="btn btn--ghost btn--lg" href="https://github.com/mhplala/pode-mac" target="_blank" rel="noopener">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style="margin-right: 6px;">
+                        <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.55v-2.06c-3.2.7-3.87-1.36-3.87-1.36-.52-1.34-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.79 0c2.21-1.49 3.18-1.18 3.18-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.4-5.27 5.68.41.35.78 1.05.78 2.12v3.14c0 .31.21.67.8.55C20.21 21.39 23.5 17.07 23.5 12 23.5 5.65 18.35.5 12 .5z"/>
+                    </svg>
+                    <span data-i18n="hero.cta.source">Source on GitHub</span>
+                </a>
+            </div>
+
+            <p class="hero__meta">
+                <span data-i18n="hero.req">Requires macOS 14 (Sonoma) or later · Apple Silicon</span>
+            </p>
+
+            <!-- Mockup placeholder — a stylized window preview that mirrors
+                 the app's chrome (rounded glass, sidebar, paper background). -->
+            <div class="hero__mockup">
+                <div class="window">
+                    <div class="window__chrome">
+                        <span class="dot dot--red"></span>
+                        <span class="dot dot--yellow"></span>
+                        <span class="dot dot--green"></span>
+                    </div>
+                    <div class="window__body">
+                        <aside class="window__sidebar">
+                            <div class="window__brand">
+                                <img src="./assets/icon-128.png" alt="">
+                                <div>
+                                    <strong>pode</strong>
+                                    <small data-i18n="mockup.tagline">podcasts, transcribed</small>
+                                </div>
+                            </div>
+                            <ul class="window__nav">
+                                <li class="active"><span data-i18n="mockup.nav.listen">Listen Now</span></li>
+                                <li><span data-i18n="mockup.nav.browse">Browse</span></li>
+                                <li><span data-i18n="mockup.nav.library">Library</span></li>
+                                <li><span data-i18n="mockup.nav.knowledge">Knowledge</span></li>
+                            </ul>
+                        </aside>
+                        <main class="window__main">
+                            <p class="eyebrow" data-i18n="mockup.today">TUESDAY · MAY 11</p>
+                            <h2><span data-i18n="mockup.greeting.before">Good morning,</span> <em data-i18n="mockup.greeting.em">friend</em>.</h2>
+                            <div class="window__featured">
+                                <div class="window__cover"></div>
+                                <div class="window__featured-meta">
+                                    <p class="eyebrow" data-i18n="mockup.featured">FEATURED · TECHNOLOGY</p>
+                                    <h3 data-i18n="mockup.epTitle">On agents, edges, and the shape of attention</h3>
+                                    <div class="window__chip-row">
+                                        <span class="chip chip--play">▶ <span data-i18n="mockup.resume">Resume · 1:42:18</span></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </main>
+                    </div>
+
+                    <!-- Player dock with scrubber + chapter dots. Static
+                         representation of the real dock. -->
+                    <div class="window__dock">
+                        <div class="window__cover window__cover--mini"></div>
+                        <div class="window__dock-mid">
+                            <div class="window__transport">
+                                <span>−15</span><span>‹‹</span><span class="play">▶</span><span>››</span><span>+30</span>
+                            </div>
+                            <div class="window__scrub">
+                                <span class="time">00:47:49</span>
+                                <div class="track">
+                                    <div class="track__fill"></div>
+                                    <div class="track__dot" style="left: 18%"></div>
+                                    <div class="track__dot" style="left: 36%"></div>
+                                    <div class="track__dot" style="left: 54%"></div>
+                                    <div class="track__dot" style="left: 72%"></div>
+                                    <div class="track__handle"></div>
+                                </div>
+                                <span class="time">02:17:48</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- ─────────────────  PHILOSOPHY  ───────────────── -->
+    <section class="section">
+        <div class="section__inner">
+            <p class="eyebrow" data-i18n="philosophy.eyebrow">WHY PODE</p>
+            <h2 class="section__title">
+                <span data-i18n="philosophy.title.before">Built for</span>
+                <em data-i18n="philosophy.title.em">listening</em><span data-i18n="philosophy.title.after">, not algorithms.</span>
+            </h2>
+
+            <div class="cards">
+                <article class="card">
+                    <h3 data-i18n="phil.1.title">Native, all the way down</h3>
+                    <p data-i18n="phil.1.body">SwiftUI. SwiftData. AVFoundation. No Electron, no web wrapper, no telemetry. About 13 MB on disk and feels like it.</p>
+                </article>
+                <article class="card">
+                    <h3 data-i18n="phil.2.title">Your transcripts, your machine</h3>
+                    <p data-i18n="phil.2.body">Local transcription via WhisperKit runs entirely on your Mac's Neural Engine. Or pipe through OpenAI Whisper if you prefer. Either way, the transcript lives on your disk.</p>
+                </article>
+                <article class="card">
+                    <h3 data-i18n="phil.3.title">AI that earns its place</h3>
+                    <p data-i18n="phil.3.body">Bring your own key — Claude, GPT, Gemini, or any OpenAI-compatible endpoint. Summaries, takeaways, and ask-the-transcript live behind one provider switch.</p>
+                </article>
+                <article class="card">
+                    <h3 data-i18n="phil.4.title">A quiet interface</h3>
+                    <p data-i18n="phil.4.body">Paper-warm canvas. Italic serif headlines. Liquid-glass surfaces. The chrome stays out of the way so the voice can come through.</p>
+                </article>
+            </div>
+        </div>
+    </section>
+
+    <!-- ─────────────────  FEATURES  ───────────────── -->
+    <section class="section section--features">
+        <div class="section__inner">
+            <p class="eyebrow" data-i18n="features.eyebrow">WHAT'S INSIDE</p>
+            <h2 class="section__title">
+                <span data-i18n="features.title.before">A serious tool, in a</span>
+                <em data-i18n="features.title.em">soft</em>
+                <span data-i18n="features.title.after">shell.</span>
+            </h2>
+
+            <div class="features">
+
+                <article class="feature">
+                    <div class="feature__visual feature__visual--scrubber">
+                        <div class="mini-track">
+                            <div class="mini-track__fill"></div>
+                            <div class="mini-track__dot" style="left: 20%"></div>
+                            <div class="mini-track__dot" style="left: 38%"></div>
+                            <div class="mini-track__dot" style="left: 55%"></div>
+                            <div class="mini-track__dot" style="left: 72%"></div>
+                            <div class="mini-track__handle"></div>
+                        </div>
+                        <div class="mini-pill">
+                            <span>On agents, edges, and attention</span>
+                            <span class="mono">23:14</span>
+                        </div>
+                    </div>
+                    <div class="feature__body">
+                        <h3 data-i18n="feat.scrubber.title">Chapter timeline</h3>
+                        <p data-i18n="feat.scrubber.body">Pode parses chapter timestamps from any episode description — bullets, brackets, full-width colons, all of it — and lays them out as dots on the scrubber. Hover for the section title. Click to jump.</p>
+                    </div>
+                </article>
+
+                <article class="feature feature--alt">
+                    <div class="feature__body">
+                        <h3 data-i18n="feat.queue.title">A queue that listens back</h3>
+                        <p data-i18n="feat.queue.body">A real play queue, persisted to SwiftData. New episodes from any subscribed show auto-promote to "play next" on refresh. Click play on anything and it's the top of the queue — the previous one stays in line.</p>
+                    </div>
+                    <div class="feature__visual feature__visual--queue">
+                        <div class="queue-row queue-row--now">
+                            <span class="queue-row__cover"></span>
+                            <div>
+                                <strong>On agents…</strong>
+                                <small data-i18n="feat.queue.now">Now playing</small>
+                            </div>
+                        </div>
+                        <div class="queue-row">
+                            <span class="queue-row__cover"></span>
+                            <div>
+                                <strong data-i18n="feat.queue.up1">Cook's moral anchors</strong>
+                                <small>Studio Room · 0:54:21</small>
+                            </div>
+                        </div>
+                        <div class="queue-row">
+                            <span class="queue-row__cover"></span>
+                            <div>
+                                <strong data-i18n="feat.queue.up2">Crosswalk: Cai Kangyong</strong>
+                                <small>X-Roads · 3:34:22</small>
+                            </div>
+                        </div>
+                    </div>
+                </article>
+
+                <article class="feature">
+                    <div class="feature__visual feature__visual--transcribe">
+                        <div class="t-stage">
+                            <span class="t-stage__dot"></span>
+                            <span class="mono" data-i18n="feat.transcribe.stage">Transcribing · 47%</span>
+                        </div>
+                        <div class="t-bar"><div class="t-bar__fill"></div></div>
+                        <div class="t-lines">
+                            <div><span class="mono">00:02:15</span><em>Su Yu</em> Right, so to back up a bit…</div>
+                            <div><span class="mono">00:02:31</span><em>Pan Luan</em> When we talk about agents, what we mean…</div>
+                            <div class="t-line--active"><span class="mono">00:02:47</span><em>Su Yu</em> …the boundary between Chat and Agent is dissolving.</div>
+                        </div>
+                    </div>
+                    <div class="feature__body">
+                        <h3 data-i18n="feat.transcribe.title">Local or cloud transcription</h3>
+                        <p data-i18n="feat.transcribe.body">WhisperKit runs Small / Medium / Large-v3-Turbo models on-device. Or use OpenAI Whisper API. Pode handles model download, caching, and self-healing if a download is interrupted.</p>
+                    </div>
+                </article>
+
+                <article class="feature feature--alt">
+                    <div class="feature__body">
+                        <h3 data-i18n="feat.ai.title">AI summaries on your terms</h3>
+                        <p data-i18n="feat.ai.body">Bring your own API key — Anthropic Claude, OpenAI, Google Gemini, or any OpenAI-compatible endpoint. Summary, takeaways, concept extraction, and ask-the-transcript all behind one provider switch. Keys never leave your Mac.</p>
+                    </div>
+                    <div class="feature__visual feature__visual--ai">
+                        <div class="ai-tabs">
+                            <span class="ai-tab ai-tab--on" data-i18n="feat.ai.summary">Summary</span>
+                            <span class="ai-tab" data-i18n="feat.ai.takeaways">Takeaways</span>
+                            <span class="ai-tab" data-i18n="feat.ai.ask">Ask</span>
+                        </div>
+                        <p class="ai-text" data-i18n="feat.ai.text">In this conversation, Su Yu unpacks the technical lineage of agents — from logical agents in the 1960s, through neural agents, to today's language agents — and argues that the most interesting…</p>
+                        <div class="ai-chips">
+                            <span class="ai-chip" data-i18n="feat.ai.chip1">Language Agent</span>
+                            <span class="ai-chip" data-i18n="feat.ai.chip2">Semantic Parsing</span>
+                            <span class="ai-chip" data-i18n="feat.ai.chip3">Tool Use</span>
+                        </div>
+                    </div>
+                </article>
+
+            </div>
+        </div>
+    </section>
+
+    <!-- ─────────────────  ALSO  ───────────────── -->
+    <section class="section">
+        <div class="section__inner">
+            <p class="eyebrow" data-i18n="also.eyebrow">ALSO IN THE BOX</p>
+            <div class="also">
+                <div class="also__item">
+                    <h4 data-i18n="also.1.title">Subscribe from Apple Podcasts</h4>
+                    <p data-i18n="also.1.body">Browse iTunes' directory by region + genre, or paste an RSS URL. Hand-curated AI editorial picks built-in.</p>
+                </div>
+                <div class="also__item">
+                    <h4 data-i18n="also.2.title">Highlights you own</h4>
+                    <p data-i18n="also.2.body">Right-click any transcript line to save a highlight. Returns as bookmarks on the scrubber + a per-episode highlights tab.</p>
+                </div>
+                <div class="also__item">
+                    <h4 data-i18n="also.3.title">Bilingual interface</h4>
+                    <p data-i18n="also.3.body">Full UI in English and Simplified Chinese. AI summaries respect your preferred language too.</p>
+                </div>
+                <div class="also__item">
+                    <h4 data-i18n="also.4.title">Auto-refresh</h4>
+                    <p data-i18n="also.4.body">Background polling every 30 minutes. New episodes from your shows show up — quietly, in the queue.</p>
+                </div>
+                <div class="also__item">
+                    <h4 data-i18n="also.5.title">Concept graph</h4>
+                    <p data-i18n="also.5.body">AI-extracted concepts across every transcribed episode roll up into a personal knowledge map.</p>
+                </div>
+                <div class="also__item">
+                    <h4 data-i18n="also.6.title">Sandboxed + notarized</h4>
+                    <p data-i18n="also.6.body">App-sandbox enabled, hardened runtime, Apple-notarized. Double-click and open — no Gatekeeper dance.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ─────────────────  DOWNLOAD  ───────────────── -->
+    <section class="section section--cta" id="download">
+        <div class="section__inner cta">
+            <p class="eyebrow" data-i18n="cta.eyebrow">READY?</p>
+            <h2 class="section__title">
+                <em data-i18n="cta.title.em">Free</em>
+                <span data-i18n="cta.title.after">. Local. Yours.</span>
+            </h2>
+            <p class="cta__sub" data-i18n="cta.sub">No account. No tracking. No subscription. Bring your own AI key when you want AI features — or don't.</p>
+
+            <a class="btn btn--primary btn--xl" href="./assets/Pode-0.2.0.dmg" download>
+                <svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 10px;">
+                    <path d="M7 1.5v8M3.5 6L7 9.5 10.5 6M2 11.5h10"/>
+                </svg>
+                <span><span data-i18n="cta.btn">Download Pode 0.2.0</span> <span class="mono">· DMG · 4 MB</span></span>
+            </a>
+
+            <p class="cta__meta">
+                <span data-i18n="cta.req">macOS 14 (Sonoma) or later · Apple Silicon · Notarized by Apple</span>
+            </p>
+        </div>
+    </section>
+
+    <!-- ─────────────────  FOOTER  ───────────────── -->
+    <footer class="footer">
+        <div class="footer__inner">
+            <div class="footer__brand">
+                <img src="./assets/icon-128.png" alt="">
+                <div>
+                    <strong>pode</strong>
+                    <small data-i18n="footer.tagline">podcasts, transcribed</small>
+                </div>
+            </div>
+            <div class="footer__links">
+                <a href="https://github.com/mhplala/pode-mac" target="_blank" rel="noopener">GitHub</a>
+                <a href="https://github.com/mhplala/pode-mac/issues" target="_blank" rel="noopener" data-i18n="footer.issues">Issues</a>
+                <a href="https://github.com/mhplala/pode-mac/releases" target="_blank" rel="noopener" data-i18n="footer.releases">Releases</a>
+            </div>
+            <p class="footer__copy" data-i18n="footer.copy">© steve studio · Made on a Mac.</p>
+        </div>
+    </footer>
+
+    <script src="./app.js"></script>
+</body>
+</html>
