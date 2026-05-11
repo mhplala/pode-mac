@@ -137,6 +137,10 @@ struct EpisodeView: View {
 
     @ViewBuilder
     private var content: some View {
+        // Bump body re-eval counter — surfaces in PerfHUD top-right.
+        // `let _ = ...` trick because SwiftUI view-builder doesn't
+        // accept bare statements but accepts let bindings.
+        let _ = PerfCounters.shared.bodyEval()
         GlassScroll {
             VStack(alignment: .leading, spacing: 0) {
                 // Back button is rendered as a fixed-position overlay
@@ -182,6 +186,16 @@ struct EpisodeView: View {
         .alert(t("Remove downloaded audio?", lang), isPresented: $confirmRemoveDownload) {
             Button(t("Cancel", lang), role: .cancel) {}
             Button(t("Remove", lang), role: .destructive) { removeDownload() }
+        }
+        // Live perf HUD — top-right corner, only on this view. Numbers
+        // are events/sec for the EpisodeView body, the dock's
+        // ScrubberRow, player ticks, scroll triggers, and active-line
+        // changes. Anything turning red is above a "this should be
+        // quiet" threshold.
+        .overlay(alignment: .topTrailing) {
+            PerfHUD()
+                .padding(.top, 56)
+                .padding(.trailing, 24)
         }
     }
 
@@ -813,9 +827,11 @@ struct EpisodeView: View {
         // tracking player.currentTime as a body dep, which is the main
         // reason the view used to re-render 60×/sec during playback.
         .onChange(of: store.player.currentTime) { _, _ in
+            PerfCounters.shared.tick()
             updateActiveLine(proxy: proxy, ep: ep)
         }
         .onChange(of: activeLineIdx) { _, _ in
+            PerfCounters.shared.activeLineChanged()
             // Active line changed → fire one throttled scroll.
             performAutoScroll(proxy: proxy, ep: ep)
         }
@@ -879,6 +895,7 @@ struct EpisodeView: View {
         guard activeLineIdx < lines.count else { return }
         let key = lines[activeLineIdx].id
         lastScrollAt = now
+        PerfCounters.shared.scrollFired()
         withAnimation(.smooth(duration: 0.55, extraBounce: 0)) {
             proxy.scrollTo(key, anchor: .center)
         }

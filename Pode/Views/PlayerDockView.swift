@@ -204,6 +204,7 @@ private struct ScrubberRow: View {
     let store: AppStore
 
     var body: some View {
+        let _ = PerfCounters.shared.dockEval()
         let dur = max(episode.duration, store.player.duration)
         let wide = dur >= 3600
         let timeWidth: CGFloat = wide ? 64 : 44
