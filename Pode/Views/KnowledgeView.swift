@@ -363,30 +363,17 @@ private struct Galaxy: View {
                     .allowsHitTesting(false)
                 }
 
-                // Nodes — dot + label share the same hit-target so either
-                // surface registers hover / tap. Tiny dots (7-15 pt) were
-                // hard to click reliably; now the label counts too.
+                // Nodes — all visuals are .allowsHitTesting(false). Hover
+                // + tap routing is handled by a single canvas-wide gesture
+                // layer below, which manually finds the nearest node from
+                // the cursor position. Per-view .onHover was unreliable
+                // when adjacent hit-circles or labels overlapped: SwiftUI
+                // didn't always fire hover-out, so hover got "stuck" on
+                // the first node the cursor touched.
                 ForEach(layout.nodes) { n in
                     let isSelected = selected == n.name
                     let isHover = hovered == n.name
                     let color = colors[n.cluster] ?? .gray
-                    let hitRadius = max(n.size + 8, 16)  // generous hit area
-
-                    // Invisible hit-target circle centred on the dot —
-                    // widens the click radius beyond the visible glyph
-                    // without affecting layout. `contentShape` keeps
-                    // hover/tap restricted to the circle.
-                    Circle()
-                        .fill(Color.white.opacity(0.0001))
-                        .frame(width: hitRadius * 2, height: hitRadius * 2)
-                        .contentShape(Circle())
-                        .position(x: n.x, y: n.y)
-                        .onTapGesture {
-                            selected = isSelected ? nil : n.name
-                        }
-                        .onHover { hov in
-                            hovered = hov ? n.name : (hovered == n.name ? nil : hovered)
-                        }
 
                     ZStack {
                         if isSelected || isHover {
@@ -405,14 +392,13 @@ private struct Galaxy: View {
                             )
                             .frame(width: n.size * 2, height: n.size * 2)
                     }
-                    .allowsHitTesting(false)   // visual only; hit goes to circle above
                     .position(x: n.x, y: n.y)
+                    .allowsHitTesting(false)
 
                     // Label — placed by the layout's collision-avoiding
                     // pass (right / left / below / above), with a
                     // parchment-toned backplate so any unavoidable
-                    // overlaps still read cleanly. Also a hit target so
-                    // clicking the text opens the concept drawer.
+                    // overlaps still read cleanly.
                     let labelPos = layout.labelPositions[n.name]
                         ?? CGPoint(x: n.x + n.size + 32, y: n.y)
                     Text(n.name)
@@ -425,18 +411,66 @@ private struct Galaxy: View {
                         .background(
                             Capsule().fill(Color(hex: "#EFE3CE").opacity(0.82))
                         )
-                        .contentShape(Capsule())
                         .position(labelPos)
-                        .onTapGesture {
-                            selected = isSelected ? nil : n.name
-                        }
-                        .onHover { hov in
-                            hovered = hov ? n.name : (hovered == n.name ? nil : hovered)
-                        }
+                        .allowsHitTesting(false)
                 }
+
+                // Single canvas-wide gesture surface. Sits on top so it
+                // gets every hover / tap event; manual hit-testing finds
+                // the nearest node and updates `hovered` / `selected`.
+                // Replaces per-node .onHover, which was getting stuck
+                // when adjacent hit-circles overlapped.
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onContinuousHover { phase in
+                        let next: String?
+                        switch phase {
+                        case .active(let p): next = Self.hitTest(at: p, layout: layout)
+                        case .ended:         next = nil
+                        }
+                        if hovered != next { hovered = next }
+                    }
+                    .gesture(
+                        SpatialTapGesture(coordinateSpace: .local).onEnded { value in
+                            if let target = Self.hitTest(at: value.location, layout: layout) {
+                                selected = (selected == target) ? nil : target
+                            }
+                        }
+                    )
             }
         }
         .frame(height: 460)
+    }
+
+    /// Find which node (if any) the cursor is over. Labels are checked
+    /// first (they're visually "on top" in the rendering order); falls
+    /// through to the dot's generous hit-radius if no label matches. Pure
+    /// function — no SwiftUI hover state involved.
+    private static func hitTest(at p: CGPoint, layout: GalaxyLayout) -> String? {
+        // 1. Label hit (priority — they're on top visually).
+        for n in layout.nodes {
+            guard let lp = layout.labelPositions[n.name] else { continue }
+            let w = estimateLabelWidth(n.name)
+            let h: Double = 18
+            let pad: Double = 3   // small slack so the edge isn't a dead zone
+            if abs(Double(p.x) - Double(lp.x)) <= w / 2 + pad,
+               abs(Double(p.y) - Double(lp.y)) <= h / 2 + pad {
+                return n.name
+            }
+        }
+        // 2. Dot hit — pick the nearest dot whose hit-circle contains the
+        //    cursor. Min radius 16pt so tiny dots stay easy to click.
+        var best: (name: String, dist: Double)? = nil
+        for n in layout.nodes {
+            let dx = n.x - Double(p.x)
+            let dy = n.y - Double(p.y)
+            let d = (dx * dx + dy * dy).squareRoot()
+            let r = max(n.size + 8, 16)
+            if d <= r, best == nil || d < best!.dist {
+                best = (n.name, d)
+            }
+        }
+        return best?.name
     }
 
     /// One pass over the concepts. Builds positions, cluster centers, and
