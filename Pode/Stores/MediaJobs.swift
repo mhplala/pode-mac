@@ -574,8 +574,15 @@ final class TranscribeStore {
                     config: aiConfig
                 )
                 // Apply by position in the same sorted array we sent.
-                for (idx, line) in sorted.enumerated() {
-                    if let s = assignments[idx] { line.speaker = s }
+                // Wrap the tight write loop in a non-animating
+                // SwiftUI transaction so any view observing these
+                // SwiftData models doesn't try to animate 300 KVO
+                // notifications in a row. The actual UI update still
+                // happens — just as a single batched diff after save.
+                withAnimation(nil) {
+                    for (idx, line) in sorted.enumerated() {
+                        if let s = assignments[idx] { line.speaker = s }
+                    }
                 }
                 try? ctx.save()
                 update(jobID) {

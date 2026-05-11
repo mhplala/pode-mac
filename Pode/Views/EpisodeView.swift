@@ -698,21 +698,26 @@ struct EpisodeView: View {
                 // is correct.
                 //
                 // Source the display list from the right place:
-                //   - transcribing → the in-memory streamingLines on the
-                //     TranscribeJob (no SwiftData round-trip, no @Query
-                //     refresh storm).
-                //   - else → the cached sorted SwiftData rows (refreshed
-                //     only when the row count actually changes, not on
-                //     every body re-eval).
+                //   1. If the streaming buffer has content, it's the
+                //      authoritative live view (mid-transcribe).
+                //   2. Otherwise fall through to the cached persisted
+                //      rows. This covers post-persist (speaker
+                //      inference / finalizing) when streamingLines has
+                //      been cleared but the cache holds the canonical
+                //      result — without this fallback the UI went
+                //      blank for the entire speaker-inference window.
                 let visible: [StreamLine] = {
-                    if transcribing, let job = transcribeJob {
+                    if let job = transcribeJob, !job.streamingLines.isEmpty {
                         return contiguousPrefix(of: job.streamingLines)
                     }
                     return sortedCache
                 }()
-                let totalCount = transcribing
-                    ? (transcribeJob?.streamingLines.count ?? 0)
-                    : sortedCache.count
+                let totalCount: Int = {
+                    if let job = transcribeJob, !job.streamingLines.isEmpty {
+                        return job.streamingLines.count
+                    }
+                    return sortedCache.count
+                }()
                 ForEach(visible, id: \.id) { line in
                     TranscriptRow(
                         time: line.t,
@@ -770,20 +775,38 @@ struct EpisodeView: View {
                 }
             }
             .padding(.horizontal, 24)
-            .padding(.vertical, ep.transcriptLines.isEmpty && (transcribeJob?.streamingLines.isEmpty ?? true) ? 0 : 24)
+            // Padding key derived from cache + streaming state, NOT
+            // from ep.transcriptLines (which would put the relationship
+            // in body's observation set and cause re-evals on every
+            // SwiftData speaker write during inference).
+            .padding(.vertical,
+                     (sortedCache.isEmpty && (transcribeJob?.streamingLines.isEmpty ?? true)) ? 0 : 24)
             // Drives the row-level insertion animations + skeleton
-            // fade-outs. We key on the relevant count for the active
-            // source so the animation actually fires on inserts.
+            // fade-outs. Key on the active source's count so the
+            // animation actually fires on inserts.
             .animation(.easeOut(duration: 0.28),
-                       value: transcribing
-                           ? (transcribeJob?.streamingLines.count ?? 0)
-                           : sortedCache.count)
+                       value: (transcribeJob?.streamingLines.isEmpty ?? true)
+                           ? sortedCache.count
+                           : (transcribeJob?.streamingLines.count ?? 0))
         }
-        // Refresh the cached sorted snapshot only on row-count changes
-        // or when we transition out of transcribing. This is the ONLY
-        // sort we do — body never sorts.
+        // Cache refresh triggers. The cache is the ONLY sorted list we
+        // build; body never sorts.
+        //   - count change: persist phase inserted/deleted rows.
+        //   - transcribing flip: start (clear stale) or end (pick up
+        //     speakers + any post-stream writes).
+        //   - first appear: cold load.
         .onChange(of: ep.transcriptLines.count) { _, _ in refreshSortedCache(ep: ep) }
-        .onChange(of: transcribing) { _, _ in refreshSortedCache(ep: ep) }
+        .onChange(of: transcribing) { _, isNow in
+            if isNow {
+                // Starting a new transcription on an already-transcribed
+                // episode: drop the stale cache so the streaming buffer
+                // (not last session's rows) drives the live display.
+                sortedCache = []
+                activeLineIdx = -1
+            } else {
+                refreshSortedCache(ep: ep)
+            }
+        }
         .onAppear { refreshSortedCache(ep: ep) }
         // Active-line tracking: update @State once when the player
         // crosses a line boundary. By moving this OUT of body we stop
