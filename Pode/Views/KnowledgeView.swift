@@ -859,7 +859,13 @@ private struct ConceptDrawer: View {
     ]
 
     var body: some View {
-        let mentioned = episodes.filter { concept.episodeIDs.contains($0.id) }
+        // Episode-ID lookup as a Set — `concept.episodeIDs` is a
+        // [String], `.contains` on it is O(n) per filter step. With
+        // a popular concept spanning 20+ episodes and a library of
+        // 200+ episodes, that's tens of thousands of comparisons
+        // every body re-render. The Set lookup is O(1).
+        let episodeIDSet = Set(concept.episodeIDs)
+        let mentioned = episodes.filter { episodeIDSet.contains($0.id) }
         let color = Self.clusterColors[concept.cluster] ?? .gray
 
         VStack(alignment: .leading, spacing: 0) {
@@ -1068,20 +1074,33 @@ private struct ConceptDrawer: View {
         defineError = nil
 
         // Gather grounding snippets: prefer each episode's AI summary
-        // (already a tight distillation). If none exist, fall back to the
-        // first few transcript lines that contain the concept name.
-        let mentioned = episodes.filter { concept.episodeIDs.contains($0.id) }
+        // (already a tight distillation). If none exist, fall back to
+        // a SHALLOW transcript scan — at most 200 lines per episode
+        // with an early-break in matchCollect, instead of materialising
+        // every episode's full sorted transcript and full-scanning.
+        // For a popular concept spanning 6 episodes × 2000 lines each,
+        // the old path was 12k line allocations + 12k case-insensitive
+        // contains() on the MainActor.
+        let episodeIDSet = Set(concept.episodeIDs)
+        let mentioned = episodes.filter { episodeIDSet.contains($0.id) }
         let mentions: [(episodeTitle: String, snippet: String)] = mentioned.prefix(6).map { ep in
             if let s = ep.aiSummary, !s.isEmpty {
                 return (ep.title, s)
             }
-            // Pluck up to 3 transcript lines that mention the concept by
-            // substring — cheap heuristic, no embedding needed.
-            let needles = ep.sortedTranscriptLines
-                .filter { $0.text.localizedCaseInsensitiveContains(conceptName) }
-                .prefix(3)
-                .map { $0.text }
-            return (ep.title, needles.joined(separator: " … "))
+            // Shallow scan: walk the relationship lazily, early-break
+            // after we've collected 3 matches OR examined 200 lines.
+            // Avoids the full sort + full scan for unanalyzed episodes.
+            var hits: [String] = []
+            var examined = 0
+            for line in ep.transcriptLines {
+                examined += 1
+                if line.text.localizedCaseInsensitiveContains(conceptName) {
+                    hits.append(line.text)
+                    if hits.count >= 3 { break }
+                }
+                if examined >= 200 { break }
+            }
+            return (ep.title, hits.joined(separator: " … "))
         }
 
         do {

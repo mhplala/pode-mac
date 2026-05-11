@@ -332,17 +332,25 @@ final class AppStore {
             (.appLanguage, s.appLanguage, nil, nil),
             (.playbackRate, nil, s.playbackRate, nil),
         ]
+        // Single fetch + dictionary upsert instead of N per-key
+        // fetches. Previously this loop did one FetchDescriptor
+        // per setting (~23 settings) on every save — and the
+        // settings page autosave is 600ms-debounced, so typing
+        // an API key or sliding a value could fire 30+ saves ×
+        // 23 fetches = 700 main-thread fetches per minute.
+        let allRecords = (try? ctx.fetch(FetchDescriptor<AppSettingsRecord>())) ?? []
+        var byKey: [String: AppSettingsRecord] = [:]
+        byKey.reserveCapacity(allRecords.count)
+        for r in allRecords { byKey[r.key] = r }
+
         for (key, str, dbl, bln) in pairs {
             let keyString = key.rawValue
-            let descriptor = FetchDescriptor<AppSettingsRecord>(
-                predicate: #Predicate<AppSettingsRecord> { $0.key == keyString }
-            )
-            if let existing = (try? ctx.fetch(descriptor))?.first {
+            if let existing = byKey[keyString] {
                 existing.stringValue = str
                 existing.doubleValue = dbl
                 existing.boolValue = bln
             } else {
-                ctx.insert(AppSettingsRecord(key: key.rawValue, stringValue: str, doubleValue: dbl, boolValue: bln))
+                ctx.insert(AppSettingsRecord(key: keyString, stringValue: str, doubleValue: dbl, boolValue: bln))
             }
         }
         try? ctx.save()

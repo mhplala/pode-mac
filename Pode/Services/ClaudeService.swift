@@ -140,19 +140,22 @@ enum AIService {
     static func analyze(transcript: [(t: Double, text: String)],
                         episodeTitle: String, showTitle: String,
                         config: AIClientConfig) async throws -> AIAnalysis {
-        // Format with rounded second-marker prefixes so the model can
-        // emit `t` (in seconds) per takeaway corresponding to the
-        // line that best supports the claim. The format is the same
-        // pattern as `ask` uses for citations.
-        let body = transcript.map { "[\(Int($0.t))s] \($0.text)" }
-            .joined(separator: "\n")
+        // Build the prompt off-main. For a 3-hour episode the
+        // map + join is ~20ms on MainActor — enough to drop a
+        // frame. Task.detached hops to a cooperative-pool
+        // executor; we also build INCREMENTALLY so we stop as
+        // soon as we hit the 150K char budget instead of
+        // materialising the full 200K string and slicing.
+        //
         // 150K chars covers a ~3-hour Chinese podcast (1 char ≈ 1 token)
         // and a ~6-hour English one. Fits inside every major model's
         // context (Haiku 200K, GPT-4o-mini 128K with output room,
         // Gemini Flash 1M). The previous 24K dropped ~80% of any
         // 1-hour Chinese episode, producing summaries that only knew
         // the first 20 minutes of the conversation.
-        let trimmed = String(body.prefix(150_000))
+        let trimmed: String = await Task.detached(priority: .userInitiated) {
+            buildStampedTranscript(transcript: transcript, maxChars: 150_000)
+        }.value
         let baseSystem = """
 You are an editorial AI helping a thoughtful listener build a "personal canon" of ideas from podcast transcripts. Output strict JSON only — no prose, no markdown.
 
@@ -223,13 +226,16 @@ Return JSON.
     static func ask(question: String, episodeTitle: String,
                     lines: [(index: Int, t: Double, text: String)],
                     config: AIClientConfig) async throws -> AIAnswer {
-        let numbered = lines.map { "[\($0.index)@\(Int($0.t))s] \($0.text)" }.joined(separator: "\n")
-        // Same 150K-char cap as `analyze` — see comment there.
+        // Off-main prompt build with incremental char budget.
+        // Same reasoning as `analyze`.
+        let numbered: String = await Task.detached(priority: .userInitiated) {
+            buildNumberedLines(lines: lines, maxChars: 150_000)
+        }.value
         let user = """
 Episode: \(episodeTitle)
 
 Lines:
-\(String(numbered.prefix(150_000)))
+\(numbered)
 
 Question: \(question)
 
@@ -594,6 +600,48 @@ Return JSON.
         }
         return nil
     }
+}
+
+// MARK: - Off-main prompt builders
+//
+// File-private free functions so `Task.detached` can call them
+// without ferrying actor isolation across the hop. Both build the
+// transcript section INCREMENTALLY: when the accumulated string
+// crosses the budget we stop appending, instead of materialising
+// a multi-megabyte string and slicing 90% of it back off.
+
+@Sendable
+fileprivate func buildStampedTranscript(transcript: [(t: Double, text: String)],
+                                        maxChars: Int) -> String {
+    // Track length via an Int counter — `String.count` is O(n) so
+    // querying it inside the loop would make the whole build O(n²).
+    var out = ""
+    out.reserveCapacity(min(maxChars + 1024, 200_000))
+    var outLen = 0
+    for line in transcript {
+        let chunk = "[\(Int(line.t))s] \(line.text)\n"
+        let cc = chunk.count
+        if outLen + cc > maxChars { break }
+        out.append(chunk)
+        outLen += cc
+    }
+    return out
+}
+
+@Sendable
+fileprivate func buildNumberedLines(lines: [(index: Int, t: Double, text: String)],
+                                    maxChars: Int) -> String {
+    var out = ""
+    out.reserveCapacity(min(maxChars + 1024, 200_000))
+    var outLen = 0
+    for line in lines {
+        let chunk = "[\(line.index)@\(Int(line.t))s] \(line.text)\n"
+        let cc = chunk.count
+        if outLen + cc > maxChars { break }
+        out.append(chunk)
+        outLen += cc
+    }
+    return out
 }
 
 // MARK: - Shim: keep the old `ClaudeService.foo(... apiKey: ..., model: ...)`
