@@ -83,7 +83,21 @@ private struct BrandAccentKey: EnvironmentKey {
     static let defaultValue: Color = Brand.orange
 }
 
+/// Set of `Episode.id` values currently in the playback queue. Lifted
+/// out of `EpisodeRow` (where each row used to declare its own
+/// `@Query`) into a single source per list. A Library / ShowDetail
+/// page with hundreds of rows used to open hundreds of SwiftData
+/// subscriptions; now the parent fetches once and propagates the
+/// derived Set via this environment key.
+private struct QueueIDsKey: EnvironmentKey {
+    static let defaultValue: Set<String> = []
+}
+
 extension EnvironmentValues {
+    var queueIDs: Set<String> {
+        get { self[QueueIDsKey.self] }
+        set { self[QueueIDsKey.self] = newValue }
+    }
     var brandAccent: Color {
         get { self[BrandAccentKey.self] }
         set { self[BrandAccentKey.self] = newValue }

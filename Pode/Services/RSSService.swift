@@ -207,28 +207,38 @@ private final class RSSParserDelegate: NSObject, XMLParserDelegate {
         return 0
     }
 
+    // Static regex cache. Previously the three regexes were rebuilt
+    // on every stripHTML call — a single auto-refresh sweep over 30
+    // shows × 50 episodes recompiled 4500 NSRegularExpression objects
+    // back-to-back, eating significant CPU at refresh time. Compiling
+    // once lazily and reusing forever is dramatically cheaper.
+    private static let brRegex = try? NSRegularExpression(
+        pattern: "<\\s*br\\s*/?\\s*>", options: .caseInsensitive
+    )
+    private static let blockRegex = try? NSRegularExpression(
+        pattern: "</\\s*(p|div|li|h[1-6]|blockquote|tr)\\s*>",
+        options: .caseInsensitive
+    )
+    private static let tagRegex = try? NSRegularExpression(
+        pattern: "<[^>]+>", options: []
+    )
+
     private func stripHTML(_ s: String) -> String {
         var result = s
 
         // Convert block / break tags to newlines BEFORE stripping the rest,
         // so paragraph structure survives.
-        let brRegex = try? NSRegularExpression(pattern: "<\\s*br\\s*/?\\s*>", options: .caseInsensitive)
-        if let r = brRegex {
+        if let r = Self.brRegex {
             let range = NSRange(result.startIndex..., in: result)
             result = r.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "\n")
         }
-        let blockRegex = try? NSRegularExpression(
-            pattern: "</\\s*(p|div|li|h[1-6]|blockquote|tr)\\s*>",
-            options: .caseInsensitive
-        )
-        if let r = blockRegex {
+        if let r = Self.blockRegex {
             let range = NSRange(result.startIndex..., in: result)
             result = r.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "\n\n")
         }
 
         // Strip remaining tags
-        let tagRegex = try? NSRegularExpression(pattern: "<[^>]+>", options: [])
-        if let r = tagRegex {
+        if let r = Self.tagRegex {
             let range = NSRange(result.startIndex..., in: result)
             result = r.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
         }

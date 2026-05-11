@@ -111,6 +111,7 @@ struct ListenNowView: View {
             .padding(.top, 8)
             .padding(.bottom, 140)
         }
+        .environment(\.queueIDs, Set(queue.map(\.id)))
     }
 
     private var emptyState: some View {
@@ -353,10 +354,13 @@ struct EpisodeRow: View {
     @Environment(DownloadStore.self) private var downloads
     @Environment(TranscribeStore.self) private var transcribes
     @Environment(\.appLanguage) private var lang: AppLanguage
-    /// Live queue. Used to flip the "+ add" button into a "✓ in queue"
-    /// state so the user knows the episode's already in their playlist.
-    @Query(sort: [SortDescriptor(\QueueItem.position, order: .forward)])
-    private var queue: [QueueItem]
+    /// Whether the episode is in the playback queue. Pulled from the
+    /// `queueIDs` environment value, which the enclosing list fetches
+    /// ONCE per body. Previously every EpisodeRow declared its own
+    /// `@Query`, so a Library/Show page with 300 rows opened 300
+    /// SwiftData subscriptions — and every queue mutation invalidated
+    /// all of them.
+    @Environment(\.queueIDs) private var queueIDs: Set<String>
     let index: Int?
     let episode: Episode
     /// Hide the show name in the subtitle when the row is rendered on a
@@ -365,9 +369,7 @@ struct EpisodeRow: View {
     /// Up Next queue.
     var showsShowName: Bool = true
 
-    private var isInQueue: Bool {
-        queue.contains(where: { $0.id == episode.id })
-    }
+    private var isInQueue: Bool { queueIDs.contains(episode.id) }
 
     var body: some View {
         if let show = episode.show {

@@ -483,23 +483,67 @@ private struct ActiveLineMarquee: View {
     let episode: Episode
     let store: AppStore
 
+    /// Sorted snapshot of the episode's transcript lines, cached in
+    /// @State so we don't re-sort on every player tick. Re-primed when
+    /// the episode changes via `.task(id:)`.
+    @State private var sortedCache: [TranscriptLineModel] = []
+    /// Currently-active line for this dock. Updated by the player
+    /// tick subscription, NOT by reading currentTime in body — so the
+    /// dock body re-renders only when the active line actually
+    /// crosses (rare), not 2×/sec.
+    @State private var active: TranscriptLineModel? = nil
+
     var body: some View {
-        let lines = episode.sortedTranscriptLines
-        let now = store.player.currentTime
-        let active = lines.last { now >= $0.t }
-        if let active {
-            VStack(alignment: .trailing, spacing: 2) {
-                if let speaker = active.speaker {
-                    Text("\(speaker) · live")
-                        .font(.mono(10))
-                        .foregroundColor(Ink.tertiary)
+        Group {
+            if let active {
+                VStack(alignment: .trailing, spacing: 2) {
+                    if let speaker = active.speaker {
+                        Text("\(speaker) · live")
+                            .font(.mono(10))
+                            .foregroundColor(Ink.tertiary)
+                    }
+                    Text("\"\(active.text)\"")
+                        .font(.serif(12.5))
+                        .italic()
+                        .foregroundColor(Ink.secondary)
+                        .lineLimit(1)
                 }
-                Text("\"\(active.text)\"")
-                    .font(.serif(12.5))
-                    .italic()
-                    .foregroundColor(Ink.secondary)
-                    .lineLimit(1)
             }
+        }
+        // Re-prime cache on episode change. Doesn't fire per-tick; only
+        // when the played episode actually swaps.
+        .task(id: episode.id) {
+            sortedCache = episode.transcriptLines.sorted { $0.t < $1.t }
+            updateActive(at: store.player.currentTime)
+        }
+        // Subscribe via Combine subject — NOT .onChange(of: currentTime).
+        // The subject sits behind @ObservationIgnored so reading it in
+        // body adds no tracked dep, and only `active` state writes
+        // cause body re-render (i.e. when the line actually changes,
+        // ~1/sec on dense podcasts vs 2/sec on every tick).
+        .onReceive(store.player.timePublisher) { newTime in
+            updateActive(at: newTime)
+        }
+    }
+
+    /// Binary-search the active line for `now`. Writes to @State only
+    /// when the line's identity actually changes — no spurious body
+    /// re-render per tick.
+    private func updateActive(at now: Double) {
+        let lines = sortedCache
+        guard !lines.isEmpty else {
+            if active != nil { active = nil }
+            return
+        }
+        var lo = 0, hi = lines.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if lines[mid].t <= now { lo = mid + 1 } else { hi = mid }
+        }
+        let idx = lo - 1
+        let new = (idx >= 0) ? lines[idx] : nil
+        if new?.lineIndex != active?.lineIndex {
+            active = new
         }
     }
 }

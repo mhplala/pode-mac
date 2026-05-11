@@ -454,10 +454,10 @@ final class AppStore {
                 // Iterating ascending by pubDate puts the newest nearest
                 // the queue head (it's the last call → wins position[1]).
                 if !isFirstSync, !newEpisodes.isEmpty {
+                    // Batch — single fetch + single save instead of
+                    // one per episode.
                     let ordered = newEpisodes.sorted { $0.pubDate < $1.pubDate }
-                    for ep in ordered {
-                        playNext(episode: ep, reason: "auto", silent: true)
-                    }
+                    playNextBatch(episodes: ordered, reason: "auto")
                     toast("\(newEpisodes.count) new \(newEpisodes.count == 1 ? "episode" : "episodes") queued")
                 }
             }
@@ -616,6 +616,40 @@ final class AppStore {
         ctx.insert(item)
         try? ctx.save()
         if !silent { toast("Playing next") }
+    }
+
+    /// Batch variant for auto-refresh. The previous loop called
+    /// `playNext` once per newly-discovered episode → each call did
+    /// a `loadQueue()` fetch, a duplicate check, an insert, AND a
+    /// `try? ctx.save()`. A feed dropping 20 new episodes meant 20
+    /// SwiftData fetches + 20 saves on the MainActor, each one
+    /// invalidating every @Query subscriber. This version does
+    /// one fetch and one save.
+    ///
+    /// Position layout: caller's `episodes` is ascending by pubDate
+    /// (oldest first). The newest gets placed at position[head+1]
+    /// (closest to the queue head); each older one nests behind it.
+    /// Identical end-state to N sequential `playNext` calls.
+    func playNextBatch(episodes: [Episode], reason: String = "auto") {
+        guard let ctx = modelContext, !episodes.isEmpty else { return }
+        let items = loadQueue()
+        let incomingIDs = Set(episodes.map(\.id))
+        // Drop any pre-existing queue entries for these IDs in one pass.
+        for item in items where incomingIDs.contains(item.id) {
+            ctx.delete(item)
+        }
+        let headPos = items.first(where: { !incomingIDs.contains($0.id) })?.position ?? 0
+        // Newest-first ordering — closest to head.
+        for (offset, ep) in episodes.reversed().enumerated() {
+            let item = QueueItem(
+                id: ep.id,
+                position: headPos + offset + 1,
+                addedReason: reason
+            )
+            item.episode = ep
+            ctx.insert(item)
+        }
+        try? ctx.save()
     }
 
     /// Move an episode to the head of the queue (the currently-playing

@@ -6,6 +6,12 @@ struct LibraryView: View {
     @Environment(AppStore.self) private var store
     @Query(sort: [SortDescriptor(\Show.addedAt, order: .reverse)]) private var shows: [Show]
     @Query(sort: [SortDescriptor(\Episode.pubDate, order: .reverse)]) private var episodes: [Episode]
+    /// Single source of "which episodes are in the queue" for this
+    /// page. Pushed into `\.queueIDs` env value below so EpisodeRow
+    /// (which used to declare its own @Query per row) reads it
+    /// without each row opening its own SwiftData subscription.
+    @Query(sort: [SortDescriptor(\QueueItem.position, order: .forward)])
+    private var queueItems: [QueueItem]
 
     enum LibraryTab: String, CaseIterable, Hashable {
         case shows, episodes, downloaded, transcripts
@@ -19,6 +25,15 @@ struct LibraryView: View {
         }
     }
     @State private var tab: LibraryTab = .shows
+
+    /// Derived once per body re-eval from the single `queueItems`
+    /// @Query. EpisodeRow reads this via the environment. Cheap
+    /// allocation; alternative (passing the Set as a struct param)
+    /// would break value-equality on EpisodeRow which is wanted later
+    /// for Equatable-based diff skipping.
+    private var queueIDSet: Set<String> {
+        Set(queueItems.map(\.id))
+    }
 
     var body: some View {
         GlassScroll {
@@ -52,6 +67,9 @@ struct LibraryView: View {
             .padding(.top, 8)
             .padding(.bottom, 140)
         }
+        // Propagate queue-id Set to every EpisodeRow below so they
+        // don't each open their own @Query.
+        .environment(\.queueIDs, queueIDSet)
     }
 
     private var showsView: some View {
@@ -167,12 +185,20 @@ struct ShowDetailView: View {
 
     let showId: String
     @Query private var shows: [Show]
+    /// Single queue fetch for the page so EpisodeRows below don't
+    /// each open one. See same pattern in LibraryView above.
+    @Query(sort: [SortDescriptor(\QueueItem.position, order: .forward)])
+    private var queueItems: [QueueItem]
     @State private var refreshing = false
     @State private var confirmRemove = false
 
     init(showId: String) {
         self.showId = showId
         _shows = Query(filter: #Predicate<Show> { $0.id == showId })
+    }
+
+    private var queueIDSet: Set<String> {
+        Set(queueItems.map(\.id))
     }
 
     var body: some View {
@@ -323,6 +349,7 @@ struct ShowDetailView: View {
         } message: {
             Text(t("Episodes, transcripts and highlights for this show will be removed.", lang))
         }
+        .environment(\.queueIDs, queueIDSet)
     }
 
     /// Decide what the Play button on the show page should do, and which

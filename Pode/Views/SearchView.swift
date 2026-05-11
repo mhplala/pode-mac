@@ -18,6 +18,9 @@ struct SearchView: View {
 
     @Query(sort: [SortDescriptor(\Show.addedAt, order: .reverse)]) private var allShows: [Show]
     @Query(sort: [SortDescriptor(\Episode.pubDate, order: .reverse)]) private var allEpisodes: [Episode]
+    /// Single queue fetch so EpisodeRow doesn't subscribe per row.
+    @Query(sort: [SortDescriptor(\QueueItem.position, order: .forward)])
+    private var queueItems: [QueueItem]
     // Transcript lines NO LONGER pulled into memory via @Query — for a
     // heavy user that's tens of thousands of rows materialised at view
     // init plus an O(n) lowercase+contains scan on every keystroke.
@@ -108,6 +111,7 @@ struct SearchView: View {
             .padding(.horizontal, 32)
             .padding(.top, 8)
         }
+        .environment(\.queueIDs, Set(queueItems.map(\.id)))
         // Debounce typing → write `debouncedQuery` 280ms after the
         // last keystroke. All downstream filtering depends on this
         // so a fast typist doesn't pay search cost per character.

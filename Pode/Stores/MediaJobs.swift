@@ -92,8 +92,21 @@ final class DownloadStore {
                 let dest = try await AudioDownloader.download(from: url) { loaded, total in
                     Task { @MainActor [weak self] in
                         guard var j = self?.jobs[id], j.task != nil else { return }
+                        // Two-stage throttle: (a) integer percent
+                        // must have advanced, or completion has
+                        // landed; (b) ≥100ms since the last accepted
+                        // update. Drops 90%+ of progress callbacks
+                        // without changing visible bar accuracy.
+                        let pct: Int = total > 0 ? Int((Double(loaded) / Double(total) * 100).rounded()) : 0
+                        let now = Date()
+                        let completed = total > 0 && loaded >= total
+                        let advanced = pct != j.lastProgressPct
+                        let cool = now.timeIntervalSince(j.lastProgressAt) >= 0.1
+                        guard completed || (advanced && cool) else { return }
                         j.loaded = loaded
                         j.total = total
+                        j.lastProgressPct = pct
+                        j.lastProgressAt = now
                         self?.jobs[id] = j
                     }
                 }
@@ -176,6 +189,14 @@ struct DownloadJob {
     var error: String? = nil
     /// `nil` once the job terminates. Live → cancellable.
     var task: Task<Void, Never>? = nil
+    /// Throttle gate for the progress callback. URLSession can fire
+    /// 100+ progress events/sec on a fast connection; without this
+    /// each one writes `jobs[id]` and invalidates every UI that
+    /// observes DownloadStore. We update at most once per 100ms.
+    var lastProgressAt: Date = .distantPast
+    /// Last whole-percent value pushed. Stops same-percent updates
+    /// from making it through (e.g. four 23.x% events in a row).
+    var lastProgressPct: Int = -1
 
     /// 0..1 fraction. Returns 0 before the first byte is reported.
     var progress: Double {
@@ -504,7 +525,7 @@ final class TranscribeStore {
             // so the episode doesn't end up in a half-transcribed state.
             // SwiftData is untouched during streaming (Phase B), so the
             // only thing to clear is the in-memory job buffer.
-            update(jobID) { $0.streamingLines = [] }
+            update(jobID) { $0.clearStreaming() }
             for line in episode.transcriptLines { ctx.delete(line) }
             try? ctx.save()
             throw error
@@ -620,25 +641,62 @@ struct TranscribeJob {
     /// previously triggered a @Query refresh per segment, melting the
     /// main thread). Cleared in `.finalizing` once persisted.
     var streamingLines: [StreamLine] = []
+    /// Hash-set companion to `streamingLines` for O(1) dedup checks.
+    /// Previously `appendStreaming` did `streamingLines.contains(where:)`
+    /// for every incoming row — O(n) scan per row, with a long episode
+    /// (~3000 rows) yielding O(n²) work over a transcribe run, all on
+    /// the MainActor. Internal-by-convention; never read outside the
+    /// struct. Kept non-private to preserve the synthesized
+    /// memberwise initializer that other call sites rely on.
+    var streamingIDs: Set<Int> = []
 
-    /// Insertion-sorted append. `segments` arrives out of order from
-    /// parallel VAD workers, so we walk an O(log n) binary search to
-    /// find the slot and splice in. Batches of segments are typically
-    /// 1-30 rows, so the overall pass is cheap.
+    /// Bulk-merge a batch of out-of-order segments. Strategy:
+    ///   1. Dedup via the `streamingIDs` Set (O(1) per row).
+    ///   2. Sort the fresh rows in-place (O(k log k), k = batch size).
+    ///   3. Either append (the common case — chunks usually finish in
+    ///      monotonic order) or do an in-place merge (when workers
+    ///      finish out of order, ~10-30% of chunks).
+    /// The whole call is O(n + k log k) instead of the previous
+    /// O(k · n) — for a 3000-row episode with 20-row batches that
+    /// drops from ~60k array ops per batch to a single merge pass.
     mutating func appendStreaming(_ rows: [StreamLine]) {
+        // 1. Dedup via Set + collect fresh rows.
+        var fresh: [StreamLine] = []
+        fresh.reserveCapacity(rows.count)
         for row in rows {
-            // Skip dupes by lineIndex — defence against the rare case
-            // where WhisperKit emits a post-merge segment with the same
-            // (seek, start) we've already accepted.
-            if streamingLines.contains(where: { $0.id == row.id }) { continue }
-            // Binary search for insertion point by t.
-            var lo = 0, hi = streamingLines.count
-            while lo < hi {
-                let mid = (lo + hi) / 2
-                if streamingLines[mid].t < row.t { lo = mid + 1 } else { hi = mid }
+            if streamingIDs.insert(row.id).inserted {
+                fresh.append(row)
             }
-            streamingLines.insert(row, at: lo)
         }
+        if fresh.isEmpty { return }
+        // 2. Sort batch by t.
+        fresh.sort { $0.t < $1.t }
+        // 3a. Fast path: the whole batch is >= the current tail.
+        if let last = streamingLines.last, let head = fresh.first, head.t >= last.t {
+            streamingLines.append(contentsOf: fresh)
+            return
+        }
+        // 3b. Out-of-order workers — do a single merge pass.
+        var merged: [StreamLine] = []
+        merged.reserveCapacity(streamingLines.count + fresh.count)
+        var i = 0, j = 0
+        while i < streamingLines.count && j < fresh.count {
+            if streamingLines[i].t <= fresh[j].t {
+                merged.append(streamingLines[i]); i += 1
+            } else {
+                merged.append(fresh[j]); j += 1
+            }
+        }
+        if i < streamingLines.count { merged.append(contentsOf: streamingLines[i...]) }
+        if j < fresh.count          { merged.append(contentsOf: fresh[j...]) }
+        streamingLines = merged
+    }
+
+    /// Reset both the buffer and the dedup Set. Called after the
+    /// post-stream batch-persist (success) or on pipeline error.
+    mutating func clearStreaming() {
+        streamingLines.removeAll(keepingCapacity: false)
+        streamingIDs.removeAll(keepingCapacity: false)
     }
 
     /// Unified 0..1 progress across the whole pipeline. Each stage owns a
