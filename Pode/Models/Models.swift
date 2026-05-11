@@ -73,6 +73,12 @@ final class Episode {
 
     var aiSummary: String?
     var aiTakeaways: [String]?
+    /// Per-takeaway timestamp in seconds. Same index as `aiTakeaways`.
+    /// `nil` means "AI didn't supply a timestamp for this takeaway"
+    /// (legacy data pre-0.5.20, or a particular item the LLM couldn't
+    /// localise to a line). UI renders a clickable seek pill when
+    /// `aiTakeawayTimes[i] != nil`.
+    var aiTakeawayTimes: [Double]?
     var aiConcepts: [String]?
 
     var show: Show?

@@ -4,7 +4,10 @@ import Foundation
 
 struct AIAnalysis {
     let summary: String
-    let takeaways: [String]
+    /// Each takeaway is paired with an optional timestamp (seconds
+    /// into the audio) at which it was best supported. UI renders a
+    /// click-to-seek pill next to the text when `t != nil`.
+    let takeaways: [(text: String, t: Double?)]
     let concepts: [(name: String, cluster: String)]
 }
 
@@ -134,30 +137,44 @@ enum AIService {
 
     // MARK: Public
 
-    static func analyze(transcript: [String], episodeTitle: String, showTitle: String,
+    static func analyze(transcript: [(t: Double, text: String)],
+                        episodeTitle: String, showTitle: String,
                         config: AIClientConfig) async throws -> AIAnalysis {
-        let joined = transcript.joined(separator: " ")
-        let trimmed = String(joined.prefix(24000))
+        // Format with rounded second-marker prefixes so the model can
+        // emit `t` (in seconds) per takeaway corresponding to the
+        // line that best supports the claim. The format is the same
+        // pattern as `ask` uses for citations.
+        let body = transcript.map { "[\(Int($0.t))s] \($0.text)" }
+            .joined(separator: "\n")
+        // 150K chars covers a ~3-hour Chinese podcast (1 char ≈ 1 token)
+        // and a ~6-hour English one. Fits inside every major model's
+        // context (Haiku 200K, GPT-4o-mini 128K with output room,
+        // Gemini Flash 1M). The previous 24K dropped ~80% of any
+        // 1-hour Chinese episode, producing summaries that only knew
+        // the first 20 minutes of the conversation.
+        let trimmed = String(body.prefix(150_000))
         let baseSystem = """
 You are an editorial AI helping a thoughtful listener build a "personal canon" of ideas from podcast transcripts. Output strict JSON only — no prose, no markdown.
 
+The transcript below is line-prefixed with `[<seconds>s]` markers — the second offset into the audio at which each line was spoken. Use these to attach a timestamp to each takeaway.
+
 Keys:
 - summary (string, 4-7 sentences in the voice of a careful editor): open with one sentence framing what the episode is about and who the guest is. Then trace the actual argument or arc — what's the main thesis, what evidence or stories carry it, what twist or turn does the conversation take. End with what someone walks away thinking. Be specific about content, not generic about "interesting topics".
-- takeaways (array of strings): one entry per distinct insight in the conversation. DO NOT cap at 3 or 5 — capture every separable idea worth remembering, in the order they appear. A short episode might have 4 takeaways; a long technical one might have 12-20. Each takeaway is a crisp single sentence (under 30 words) that conveys the actual claim, not a vague reference.
+- takeaways (array of objects {text: string, t: integer seconds}): one entry per distinct insight in the conversation, in the order they appear. DO NOT cap at 3 or 5 — capture every separable idea worth remembering. Short episode: 4 entries; long technical one: 12-20. Each `text` is a crisp single sentence (under 30 words). `t` is the second-marker of the line that best supports the takeaway (just the integer from the `[Ns]` prefix, no quotes). If unsure, pick the earliest line where the idea is stated.
 - concepts (array of 4-10 objects with {name: short noun phrase ≤4 words, cluster: one of "Editorial","Mind","Body","Craft","Other"}).
 
 Cluster meanings: Editorial = writing, the slow web, ideas about reading; Mind = perception, prediction, cognition; Body = sleep, attention, biology; Craft = sound, making, technique.
 """
-        // Language directive — `summary` and `takeaways` follow this; concept
-        // `cluster` values STAY in English (they're internal taxonomy).
+        // Language directive — `summary` and `takeaways[].text` follow this;
+        // concept `cluster` values STAY in English (they're internal taxonomy).
         let system = languageDirected(baseSystem, language: config.language,
-                                      affecting: "the `summary` and `takeaways` strings",
+                                      affecting: "the `summary` and takeaway `text` strings",
                                       stayEnglish: "concept `cluster` values")
         let user = """
 Show: \(showTitle)
 Episode: \(episodeTitle)
 
-Transcript excerpt:
+Transcript:
 \(trimmed)
 
 Return JSON.
@@ -169,11 +186,30 @@ Return JSON.
         let raw = try await call(config: config, system: system, user: user, maxTokens: 3500, jsonMode: true)
         guard let json = extractJSON(from: raw) else { throw AIError.noJSON(config.provider) }
         let summary = (json["summary"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        // No `prefix(...)` cap — takeaways length is now driven by the
-        // conversation. Trim individual entries and drop any empties.
-        let takeaways = ((json["takeaways"] as? [String]) ?? [])
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
+        // Parse takeaways with the new {text, t} shape, but tolerate
+        // the legacy plain-string shape too in case a non-compliant
+        // model regresses or for backward-compat with cached responses.
+        var takeaways: [(text: String, t: Double?)] = []
+        if let rawArr = json["takeaways"] as? [[String: Any]] {
+            for item in rawArr {
+                let text = (item["text"] as? String)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !text.isEmpty else { continue }
+                // `t` may come as Int or Double depending on provider.
+                let t: Double? = {
+                    if let v = item["t"] as? Double { return v }
+                    if let v = item["t"] as? Int { return Double(v) }
+                    return nil
+                }()
+                takeaways.append((text: text, t: t))
+            }
+        } else if let rawStrings = json["takeaways"] as? [String] {
+            // Legacy fallback — no timestamps.
+            for s in rawStrings {
+                let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { takeaways.append((text: trimmed, t: nil)) }
+            }
+        }
         let conceptsRaw = (json["concepts"] as? [[String: Any]]) ?? []
         let concepts: [(name: String, cluster: String)] = conceptsRaw.prefix(10).compactMap {
             guard let name = ($0["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -181,18 +217,19 @@ Return JSON.
             let cluster = $0["cluster"] as? String ?? "Other"
             return (name, validClusters.contains(cluster) ? cluster : "Other")
         }
-        return AIAnalysis(summary: summary, takeaways: Array(takeaways), concepts: concepts)
+        return AIAnalysis(summary: summary, takeaways: takeaways, concepts: concepts)
     }
 
     static func ask(question: String, episodeTitle: String,
                     lines: [(index: Int, t: Double, text: String)],
                     config: AIClientConfig) async throws -> AIAnswer {
         let numbered = lines.map { "[\($0.index)@\(Int($0.t))s] \($0.text)" }.joined(separator: "\n")
+        // Same 150K-char cap as `analyze` — see comment there.
         let user = """
 Episode: \(episodeTitle)
 
 Lines:
-\(String(numbered.prefix(30000)))
+\(String(numbered.prefix(150_000)))
 
 Question: \(question)
 
@@ -240,8 +277,13 @@ Return JSON.
                 parts.append("Takeaways:\n\(listed)")
             }
             if parts.isEmpty {
+                // Fallback path — summary/takeaways not present yet.
+                // 30K chars is enough for the model to draft 3-5
+                // episode-specific question prompts; we don't need
+                // the full transcript here, and this path runs only
+                // briefly before analyze() lands.
                 let joined = transcript.joined(separator: " ")
-                parts.append("Transcript excerpt:\n\(String(joined.prefix(6000)))")
+                parts.append("Transcript excerpt:\n\(String(joined.prefix(30_000)))")
             }
             return parts.joined(separator: "\n\n")
         }()
@@ -562,7 +604,11 @@ enum ClaudeService {
     static func analyze(transcript: [String], episodeTitle: String, showTitle: String,
                         apiKey: String, model: String = "claude-haiku-4-5-20251001") async throws -> AIAnalysis {
         let cfg = AIClientConfig(provider: .anthropic, apiKey: apiKey, model: model, baseURL: "")
-        return try await AIService.analyze(transcript: transcript, episodeTitle: episodeTitle,
+        // Legacy shim — no timestamps available, fabricate sequential ones.
+        let stamped: [(t: Double, text: String)] = transcript.enumerated().map { (i, s) in
+            (Double(i), s)
+        }
+        return try await AIService.analyze(transcript: stamped, episodeTitle: episodeTitle,
                                            showTitle: showTitle, config: cfg)
     }
 

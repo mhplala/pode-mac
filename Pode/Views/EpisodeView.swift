@@ -835,6 +835,13 @@ struct EpisodeView: View {
                            ? sortedCache.count
                            : (transcribeJob?.streamingLines.count ?? 0))
         }
+        // Hide the scroll indicator. Auto-scroll fires every time the
+        // active line crosses (~1×/sec on dense podcasts), and each
+        // programmatic scrollTo flashes the system indicator visible
+        // — distracting. `.hidden` still reveals briefly when the
+        // user actually scrolls (trackpad / wheel), so they keep the
+        // positional feedback when they want it.
+        .scrollIndicators(.hidden)
         // (User-scroll detection now happens via the NSEvent scroll-
         // wheel monitor installed in .onAppear below. We dropped
         // .scrollPosition(id:) because it was double-driving the
@@ -1349,18 +1356,48 @@ struct EpisodeView: View {
             .font(.serif(14))
             .foregroundColor(Ink.tertiary)
         } else if let ts = ep.aiTakeaways, !ts.isEmpty {
+            // Optional per-takeaway timestamps (parallel array, sentinel
+            // -1 = "no timestamp"). Render a click-to-seek pill on the
+            // right when a real timestamp is available.
+            let times: [Double] = ep.aiTakeawayTimes ?? []
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(ts.enumerated()), id: \.offset) { i, t in
+                ForEach(Array(ts.enumerated()), id: \.offset) { i, txt in
+                    let stamp: Double? = {
+                        guard i < times.count else { return nil }
+                        let v = times[i]
+                        return v >= 0 ? v : nil
+                    }()
                     HStack(alignment: .top, spacing: 12) {
                         Text(String(format: "%02d", i + 1))
                             .font(.mono(10.5, weight: .semibold))
                             .foregroundColor(accent)
                             .frame(width: 18)
                             .padding(.top, 4)
-                        Text(t)
+                        Text(txt)
                             .font(.serif(15))
                             .foregroundColor(Ink.primary)
                             .lineSpacing(3)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if let s = stamp {
+                            Button {
+                                if store.player.currentEpisodeID != ep.id {
+                                    store.startPlaying(ep)
+                                }
+                                store.player.commitSeek(to: s)
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "play.fill").font(.system(size: 8))
+                                    Text(Fmt.time(s))
+                                }
+                                .font(.mono(10.5))
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(Capsule().fill(accent.opacity(0.1)))
+                                .foregroundColor(Brand.orange700)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.top, 2)
+                        }
                     }
                     .padding(.vertical, 11)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1590,15 +1627,19 @@ struct EpisodeView: View {
         analyzing = true
         Task { @MainActor in
             do {
-                let texts = ep.sortedTranscriptLines.map { $0.text }
+                // Pass (t, text) pairs so the AI can attach a
+                // timestamp to each takeaway — used by the UI to
+                // render click-to-seek pills.
+                let stamped = ep.sortedTranscriptLines.map { ($0.t, $0.text) }
                 let r = try await AIService.analyze(
-                    transcript: texts,
+                    transcript: stamped,
                     episodeTitle: ep.title,
                     showTitle: show.title,
                     config: cfg
                 )
                 ep.aiSummary = r.summary
-                ep.aiTakeaways = r.takeaways
+                ep.aiTakeaways = r.takeaways.map { $0.text }
+                ep.aiTakeawayTimes = r.takeaways.map { $0.t ?? -1 }   // -1 = "no timestamp"
                 ep.aiConcepts = r.concepts.map { $0.name }
                 try? modelContext.save()
                 store.rebuildConcepts()
@@ -1716,6 +1757,7 @@ struct EpisodeView: View {
         ep.transcribedAt = nil
         ep.aiSummary = nil
         ep.aiTakeaways = nil
+        ep.aiTakeawayTimes = nil
         ep.aiConcepts = nil
         try? modelContext.save()
         store.rebuildConcepts()
