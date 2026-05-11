@@ -28,7 +28,6 @@ const ZH = {
     "hero.title.after":       "。",
     "hero.sub":               "原生 macOS 播客客户端。智能队列、全文字幕、AI 摘要 —— 包裹在安静的、纸张般温暖的界面里，尊重你的注意力。",
     "hero.cta.primary":       "下载 Mac 版",
-    "hero.cta.source":        "GitHub 源代码",
     "hero.req":               "需要 macOS 14 (Sonoma) 或更高 · Apple Silicon",
 
     // Mockup
@@ -113,8 +112,6 @@ const ZH = {
 
     // Footer
     "footer.tagline":         "podcasts, transcribed",
-    "footer.issues":          "问题反馈",
-    "footer.releases":        "发布历史",
     "footer.copy":            "© steve studio · 在 Mac 上做的。",
 };
 
