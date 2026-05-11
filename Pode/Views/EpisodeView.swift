@@ -138,9 +138,13 @@ struct EpisodeView: View {
     @ViewBuilder
     private var content: some View {
         // Bump body re-eval counter — surfaces in PerfHUD top-right.
-        // `let _ = ...` trick because SwiftUI view-builder doesn't
-        // accept bare statements but accepts let bindings.
         let _ = PerfCounters.shared.bodyEval()
+        // Time the body construction. `measureBody` is a no-op-ish
+        // wrapper that brackets the build with DispatchTime.now().
+        // It does NOT capture render time (that's GPU/SwiftUI), but
+        // it does capture every sort/scan/predicate/alloc done inline,
+        // which is where most hidden cost lives.
+        measureBody(.episode) {
         GlassScroll {
             VStack(alignment: .leading, spacing: 0) {
                 // Back button is rendered as a fixed-position overlay
@@ -197,6 +201,7 @@ struct EpisodeView: View {
                 .padding(.top, 56)
                 .padding(.trailing, 24)
         }
+        }   // closes measureBody { ... }
     }
 
     // MARK: - Header card
