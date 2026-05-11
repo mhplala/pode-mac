@@ -141,7 +141,7 @@ struct KnowledgeView: View {
                 HStack(spacing: 5) {
                     Circle().fill(Self.clusterColors[cl] ?? .gray)
                         .frame(width: 7, height: 7)
-                    Text(cl)
+                    Text(t(cl, lang))
                         .font(.sans(11.5, weight: .medium))
                         .foregroundColor(Ink.secondary)
                 }
@@ -229,7 +229,7 @@ struct KnowledgeView: View {
                                     .font(.system(size: 11))
                                     .padding(.top, 4)
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text(ins.tag.uppercased())
+                                    Text(ins.tagLabel)
                                         .font(.mono(10.5, weight: .semibold))
                                         .tracking(1)
                                         .foregroundColor(Ink.tertiary)
@@ -263,38 +263,42 @@ struct KnowledgeView: View {
     }
 
     private struct Insight: Identifiable {
-        let tag: String
+        /// Already-localized eyebrow label (e.g. "RECURRING" / "复现").
+        let tagLabel: String
+        /// Already-localized full sentence.
         let text: String
         let concept: String?
-        var id: String { "\(tag):\(concept ?? "")" }
+        var id: String { "\(tagLabel):\(concept ?? "")" }
     }
 
     private func generateInsights() -> [Insight] {
         guard !concepts.isEmpty else { return [] }
         var out: [Insight] = []
+        let isZH = (lang == .zh_Hans)
+
         if let top = concepts.sorted(by: { $0.count > $1.count }).first, top.count >= 2 {
-            out.append(Insight(
-                tag: "recurring",
-                text: "\"\(top.name)\" appears in \(top.episodeIDs.count) \(top.episodeIDs.count == 1 ? "episode" : "episodes") — your most-discussed idea right now.",
-                concept: top.name
-            ))
+            let n = top.episodeIDs.count
+            let text: String = isZH
+                ? "「\(top.name)」在 \(n) 集里反复出现 —— 这是你目前最常听到的概念。"
+                : "\"\(top.name)\" appears in \(n) \(n == 1 ? "episode" : "episodes") — your most-discussed idea right now."
+            out.append(Insight(tagLabel: t("RECURRING", lang), text: text, concept: top.name))
         }
         if let cross = concepts.first(where: { $0.episodeIDs.count >= 2 && $0.cluster != "Other" }),
            cross.name != out.first?.concept {
-            out.append(Insight(
-                tag: "connection",
-                text: "\(cross.name) surfaces across multiple shows — worth pulling them together for a draft.",
-                concept: cross.name
-            ))
+            let text: String = isZH
+                ? "「\(cross.name)」横跨多个节目 —— 值得把它们串起来写一篇草稿。"
+                : "\(cross.name) surfaces across multiple shows — worth pulling them together for a draft."
+            out.append(Insight(tagLabel: t("CONNECTION", lang), text: text, concept: cross.name))
         }
         let present = Set(concepts.map { $0.cluster })
         let missing = ["Editorial", "Mind", "Body", "Craft"].first { !present.contains($0) }
         if let m = missing {
-            out.append(Insight(
-                tag: "gap",
-                text: "Nothing in your \(m) cluster yet. Try transcribing an episode that fits.",
-                concept: nil
-            ))
+            // Cluster name is itself translated — "Editorial" → "编辑" etc.
+            let clusterName = t(m, lang)
+            let text: String = isZH
+                ? "你的「\(clusterName)」分组还是空的。试试转录一集合适的节目。"
+                : "Nothing in your \(m) cluster yet. Try transcribing an episode that fits."
+            out.append(Insight(tagLabel: t("GAP", lang), text: text, concept: nil))
         }
         return Array(out.prefix(3))
     }
@@ -485,77 +489,110 @@ private struct Galaxy: View {
             }
         }
 
-        // 3. Label placement. For each node, try four anchor positions
-        //    (right, left, below, above) and pick the first one whose
-        //    bounding box doesn't collide with another dot, with an
-        //    already-placed label, or with the canvas edge. Bigger dots
-        //    are processed first so the visually-prominent labels get
-        //    the prime right-of-dot spot; smaller dots route around.
+        // 3. Label placement. For each node, try 8 anchor positions
+        //    (right, left, below, above + 4 diagonals) and pick the
+        //    first one whose bounding box doesn't collide with another
+        //    dot, with an already-placed label, or with the canvas
+        //    edge. If none are clean, fall back to whichever candidate
+        //    has the SMALLEST total collision area (rather than always
+        //    defaulting to right — that was leaving labels stacked over
+        //    neighbouring dots when the cluster was dense).
+        //    Bigger dots get processed first so the visually-prominent
+        //    labels claim the prime right-of-dot slot; smaller dots
+        //    route around them.
         let placeOrder = nodes.indices.sorted { lhs, rhs in
             if nodes[lhs].size != nodes[rhs].size { return nodes[lhs].size > nodes[rhs].size }
             return nodes[lhs].name < nodes[rhs].name   // deterministic on resize
         }
-        let dotBoxes: [Rect] = nodes.map { Rect.dot(p: $0, margin: 3) }
+        // Bigger dot margin (8pt vs old 3pt) keeps labels from kissing
+        // neighbour glyphs — the old margin let CJK labels touch the
+        // adjacent dot's circle.
+        let dotBoxes: [Rect] = nodes.map { Rect.dot(p: $0, margin: 8) }
         var placedLabelBoxes: [Rect] = []
         var labelPositions: [String: CGPoint] = [:]
         let labelH: Double = 18
-        let gap: Double = 12   // dot-to-label gap
+        let gap: Double = 14   // dot-to-label gap
+        let diag = gap / 1.4142  // 45° offset = gap / √2
 
         for idx in placeOrder {
             let n = nodes[idx]
             let w = Self.estimateLabelWidth(n.name)
             // Candidate centers — `.position` anchors at view center.
+            // Order encodes preference: right is canonical; left is the
+            // first "still aligned with the dot" alternative; vertical
+            // comes next; diagonals are last-resort.
             let candidates: [CGPoint] = [
-                CGPoint(x: n.x + n.size + gap + w / 2, y: n.y),
-                CGPoint(x: n.x - n.size - gap - w / 2, y: n.y),
-                CGPoint(x: n.x, y: n.y + n.size + gap + labelH / 2),
-                CGPoint(x: n.x, y: n.y - n.size - gap - labelH / 2),
+                // Cardinal
+                CGPoint(x: n.x + n.size + gap + w / 2,                y: n.y),
+                CGPoint(x: n.x - n.size - gap - w / 2,                y: n.y),
+                CGPoint(x: n.x,                                       y: n.y + n.size + gap + labelH / 2),
+                CGPoint(x: n.x,                                       y: n.y - n.size - gap - labelH / 2),
+                // Diagonals (NE, SE, SW, NW)
+                CGPoint(x: n.x + n.size + diag + w / 2,               y: n.y - n.size - diag - labelH / 2),
+                CGPoint(x: n.x + n.size + diag + w / 2,               y: n.y + n.size + diag + labelH / 2),
+                CGPoint(x: n.x - n.size - diag - w / 2,               y: n.y + n.size + diag + labelH / 2),
+                CGPoint(x: n.x - n.size - diag - w / 2,               y: n.y - n.size - diag - labelH / 2),
             ]
-            var chosen = candidates[0]
+
+            var chosen: CGPoint? = nil
+            var bestPenalty = Double.infinity
+            var bestFallback: CGPoint = candidates[0]
+
             for cand in candidates {
-                let bb = Rect.label(center: cand, width: w, height: labelH, margin: 2)
-                // Canvas bounds — give 2pt slack so we don't reject a
-                // label that's barely poking the edge.
-                if bb.minX < -2 || bb.maxX > width + 2 ||
-                   bb.minY < -2 || bb.maxY > height + 2 { continue }
-                // Dot collisions (skip own).
-                var clean = true
+                let bb = Rect.label(center: cand, width: w, height: labelH, margin: 3)
+                // Canvas bounds — 4pt slack at the edge.
+                let oobPenalty = max(0, -bb.minX - 4) + max(0, bb.maxX - width - 4)
+                                + max(0, -bb.minY - 4) + max(0, bb.maxY - height - 4)
+                // Aggregate collision area against dots + previously
+                // placed labels. Used both to short-circuit (penalty 0
+                // → clean) and to pick the least-bad fallback.
+                var penalty = oobPenalty * 4  // edge violations weigh heavier
                 for i in dotBoxes.indices where i != idx {
-                    if bb.overlaps(dotBoxes[i]) { clean = false; break }
+                    penalty += bb.overlapArea(dotBoxes[i])
                 }
-                if !clean { continue }
-                // Existing label collisions.
-                for lb in placedLabelBoxes where bb.overlaps(lb) {
-                    clean = false; break
+                for lb in placedLabelBoxes {
+                    penalty += bb.overlapArea(lb) * 0.6   // label-on-label is less ugly than label-on-dot
                 }
-                if clean { chosen = cand; break }
+                if penalty <= 0 {
+                    chosen = cand
+                    break
+                }
+                if penalty < bestPenalty {
+                    bestPenalty = penalty
+                    bestFallback = cand
+                }
             }
-            placedLabelBoxes.append(Rect.label(center: chosen, width: w, height: labelH, margin: 2))
-            labelPositions[n.name] = chosen
+
+            let final = chosen ?? bestFallback
+            placedLabelBoxes.append(Rect.label(center: final, width: w, height: labelH, margin: 3))
+            labelPositions[n.name] = final
         }
 
         return GalaxyLayout(nodes: nodes, clusterCenters: centers,
                             edges: edges, labelPositions: labelPositions)
     }
 
-    /// Approximate the rendered width of a label without measuring text —
-    /// CJK chars are ~12pt wide at sans 11.5pt, ASCII ~6.5pt, plus the
-    /// capsule's 10pt horizontal padding.
+    /// Approximate the rendered width of a label without measuring text.
+    /// Numbers tuned by eye against actual sans 11.5pt CJK + ASCII glyphs;
+    /// erring slightly wide is safer than narrow because under-estimates
+    /// cause the collision pass to think a label "fits" when it really
+    /// kisses the neighbour glyph.
     private static func estimateLabelWidth(_ s: String) -> Double {
         var w: Double = 0
         for u in s.unicodeScalars {
             let v = u.value
             if (0x4E00...0x9FFF).contains(v) ||
                (0x3040...0x30FF).contains(v) ||
-               (0xAC00...0xD7AF).contains(v) {
-                w += 12        // CJK / hiragana-katakana / hangul
+               (0xAC00...0xD7AF).contains(v) ||
+               (0xFF00...0xFFEF).contains(v) {   // fullwidth punctuation
+                w += 13.5      // CJK / hiragana-katakana / hangul / fullwidth
             } else if v < 128 {
-                w += 6.5       // ASCII
+                w += 7         // ASCII
             } else {
                 w += 9         // misc symbols, accents
             }
         }
-        return w + 10
+        return w + 12          // capsule horizontal padding (5+5) + slack
     }
 
     private static let ClusterOrder = ["Editorial", "Mind", "Body", "Craft", "Other"]
@@ -568,6 +605,13 @@ private struct Rect {
     let minX, minY, maxX, maxY: Double
     func overlaps(_ o: Rect) -> Bool {
         !(maxX <= o.minX || minX >= o.maxX || maxY <= o.minY || minY >= o.maxY)
+    }
+    /// Area of intersection in pt². 0 when disjoint. Used by the label
+    /// placer to pick the least-bad fallback when no clean slot exists.
+    func overlapArea(_ o: Rect) -> Double {
+        let dx = max(0, min(maxX, o.maxX) - max(minX, o.minX))
+        let dy = max(0, min(maxY, o.maxY) - max(minY, o.minY))
+        return dx * dy
     }
     static func dot(p: PositionedNode, margin: Double) -> Rect {
         Rect(minX: p.x - p.size - margin, minY: p.y - p.size - margin,
@@ -724,7 +768,7 @@ private struct ConceptDrawer: View {
                     .frame(width: 10, height: 10)
                     .overlay(Circle().stroke(color.opacity(0.22), lineWidth: 4))
                 VStack(alignment: .leading, spacing: 0) {
-                    EyebrowText(text: concept.cluster).padding(.bottom, 2)
+                    EyebrowText(text: t(concept.cluster, lang).uppercased()).padding(.bottom, 2)
                     Text(concept.name)
                         .font(.serif(22, weight: .medium))
                         .foregroundColor(Ink.primary)
@@ -745,85 +789,92 @@ private struct ConceptDrawer: View {
             }
             .padding(.bottom, 14)
 
-            HStack(spacing: 24) {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(t("Mentioned", lang)).font(.mono(10)).foregroundColor(Ink.tertiary)
-                    HStack(spacing: 0) {
-                        Text("\(concept.count)")
-                            .font(.serif(22, weight: .medium))
-                        Text("×")
-                            .font(.system(size: 13))
-                            .foregroundColor(Ink.tertiary)
-                    }
-                }
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(t("Across", lang)).font(.mono(10)).foregroundColor(Ink.tertiary)
-                    HStack(spacing: 4) {
-                        Text("\(mentioned.count)")
-                            .font(.serif(22, weight: .medium))
-                        Text("ep")
-                            .font(.system(size: 13))
-                            .foregroundColor(Ink.tertiary)
-                    }
-                }
-                Spacer()
-            }
-            .padding(.bottom, 14)
-            .overlay(
-                Rectangle().fill(Color.black.opacity(0.06)).frame(height: 1),
-                alignment: .bottom
-            )
-
-            // AI-generated short definition. Auto-fetched on first open
-            // (cached on the Concept model so reopening the same concept
-            // is instant). Falls back gracefully if AI isn't configured.
-            definitionBlock(mentioned: mentioned)
-
-            EyebrowText(text: t("From the transcripts", lang).uppercased())
-                .padding(.top, 14).padding(.bottom, 10)
-
+            // Single scroll container for stats + definition + episode
+            // list. Earlier layout put each section as a sibling in the
+            // outer VStack, which let a long definition overflow over
+            // the episode card (SwiftUI was under-measuring the Text
+            // height in a fixed-width drawer). Folding everything into
+            // one scroll view also means long Chinese definitions
+            // scroll naturally instead of pushing the layout out.
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(mentioned) { ep in
-                        if let show = ep.show {
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack(spacing: 8) {
-                                    CoverView(artworkUrl: show.artworkUrl, title: show.title, size: 22, radius: 5)
-                                    VStack(alignment: .leading, spacing: 0) {
-                                        Text(ep.title)
-                                            .font(.serif(13.5, weight: .medium))
-                                            .foregroundColor(Ink.primary)
-                                            .lineLimit(1)
-                                        Text("\(show.title) · \(Fmt.date(ep.pubDate))")
-                                            .font(.mono(10))
-                                            .foregroundColor(Ink.tertiary)
-                                    }
-                                }
-                                if let summary = ep.aiSummary, !summary.isEmpty {
-                                    Text(summary)
-                                        .font(.serif(13.5))
-                                        .foregroundColor(Ink.secondary)
-                                        .lineSpacing(2)
-                                        .lineLimit(3)
-                                }
-                                Button {
-                                    store.navigate(to: .episode(ep.id))
-                                } label: {
-                                    Text(t("Open episode →", lang))
-                                }
-                                .buttonStyle(TextButtonStyle())
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 24) {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(t("Mentioned", lang)).font(.mono(10)).foregroundColor(Ink.tertiary)
+                            HStack(spacing: 0) {
+                                Text("\(concept.count)")
+                                    .font(.serif(22, weight: .medium))
+                                Text("×")
+                                    .font(.system(size: 13))
+                                    .foregroundColor(Ink.tertiary)
                             }
-                            .padding(14)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(Color.white.opacity(0.55))
-                                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.black.opacity(0.05), lineWidth: 1))
-                            )
+                        }
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(t("Across", lang)).font(.mono(10)).foregroundColor(Ink.tertiary)
+                            HStack(spacing: 4) {
+                                Text("\(mentioned.count)")
+                                    .font(.serif(22, weight: .medium))
+                                Text("ep")
+                                    .font(.system(size: 13))
+                                    .foregroundColor(Ink.tertiary)
+                            }
+                        }
+                        Spacer()
+                    }
+                    .padding(.bottom, 14)
+                    .overlay(
+                        Rectangle().fill(Color.black.opacity(0.06)).frame(height: 1),
+                        alignment: .bottom
+                    )
+
+                    definitionBlock(mentioned: mentioned)
+
+                    EyebrowText(text: t("From the transcripts", lang).uppercased())
+                        .padding(.top, 18).padding(.bottom, 10)
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(mentioned) { ep in
+                            if let show = ep.show {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack(spacing: 8) {
+                                        CoverView(artworkUrl: show.artworkUrl, title: show.title, size: 22, radius: 5)
+                                        VStack(alignment: .leading, spacing: 0) {
+                                            Text(ep.title)
+                                                .font(.serif(13.5, weight: .medium))
+                                                .foregroundColor(Ink.primary)
+                                                .lineLimit(1)
+                                            Text("\(show.title) · \(Fmt.date(ep.pubDate))")
+                                                .font(.mono(10))
+                                                .foregroundColor(Ink.tertiary)
+                                        }
+                                    }
+                                    if let summary = ep.aiSummary, !summary.isEmpty {
+                                        Text(summary)
+                                            .font(.serif(13.5))
+                                            .foregroundColor(Ink.secondary)
+                                            .lineSpacing(2)
+                                            .lineLimit(3)
+                                    }
+                                    Button {
+                                        store.navigate(to: .episode(ep.id))
+                                    } label: {
+                                        Text(t("Open episode →", lang))
+                                    }
+                                    .buttonStyle(TextButtonStyle())
+                                }
+                                .padding(14)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .fill(Color.white.opacity(0.55))
+                                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.black.opacity(0.05), lineWidth: 1))
+                                )
+                            }
                         }
                     }
                 }
             }
-            .frame(maxHeight: 360)
+            .frame(maxHeight: 540)
         }
         .padding(22)
         .glass(.panel)
@@ -858,8 +909,14 @@ private struct ConceptDrawer: View {
                     .foregroundColor(Ink.primary)
                     .lineSpacing(3)
                     .textSelection(.enabled)
+                    // Tell SwiftUI to claim the full intrinsic height
+                    // based on width. Without this, long CJK text was
+                    // under-measured and the next section drew on top.
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(.top, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
         } else if defining {
             VStack(alignment: .leading, spacing: 6) {
                 EyebrowText(text: t("Definition", lang).uppercased())

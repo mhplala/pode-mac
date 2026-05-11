@@ -270,6 +270,21 @@ enum L10n {
         "Mind":               "心智",
         "Body":               "身体",
         "Craft":              "技艺",
+        "Other":              "其他",
+
+        // KnowledgeView — drawer + highlights/insights
+        "No highlights saved.": "暂无保存的高亮。",
+        "Definition":         "释义",
+        "Regenerate":         "重新生成",
+        "Defining":           "正在生成",
+        "Try again":          "重试",
+        "From the transcripts": "来自转录",
+        "Mentioned":          "提到",
+        "Across":             "跨",
+        // Insight eyebrow tags — shown uppercased in EN, kept readable in ZH
+        "RECURRING":          "复现",
+        "CONNECTION":         "连结",
+        "GAP":                "缺口",
 
         // Settings cards
         "You":                "你",
