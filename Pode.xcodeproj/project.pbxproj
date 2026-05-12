@@ -31,7 +31,6 @@
 		8414413BC7E9F81D1FB3AA0E /* AppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC15CD6703202E2BC755FC85 /* AppStore.swift */; };
 		8EA2466A4464D89920E21A63 /* WhisperService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 696C837CD5B88117651C6171 /* WhisperService.swift */; };
 		96EF7023116053819888719E /* MediaJobs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D73F5E54EB1586403ABA788 /* MediaJobs.swift */; };
-		9BB2D1907D2D42CA97CF9357 /* PerfLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8924D189C4B86DF5EC435CC5 /* PerfLog.swift */; };
 		9D76AB1C4F0D55843811578E /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AF80B8613BAD3E85AC7BCAB /* Models.swift */; };
 		A7D6C9AA138C39B992E2120F /* MediaCommandsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C6308114BAD9C28ADF9B1F1 /* MediaCommandsService.swift */; };
 		A979175DE0B4B880E0EC6686 /* ITunesService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A366BB3D16BEADA7E65DC582 /* ITunesService.swift */; };
@@ -67,7 +66,6 @@
 		8039DDDBEF472F25C0F5A442 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		871FA7938B447FE3A4C2F89A /* Pode.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Pode.entitlements; sourceTree = "<group>"; };
 		8867B8A46EFA85F9CFD6DE42 /* ClaudeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeService.swift; sourceTree = "<group>"; };
-		8924D189C4B86DF5EC435CC5 /* PerfLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerfLog.swift; sourceTree = "<group>"; };
 		A366BB3D16BEADA7E65DC582 /* ITunesService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ITunesService.swift; sourceTree = "<group>"; };
 		BC15CD6703202E2BC755FC85 /* AppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStore.swift; sourceTree = "<group>"; };
 		BE4E0165C5BAD57097D4B4B9 /* Pode.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Pode.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -184,7 +182,6 @@
 				13D7B5CD75D51B41E79D5D44 /* L10n.swift */,
 				59C11FADA69066F4C30C17FC /* LocalWhisperService.swift */,
 				6C6308114BAD9C28ADF9B1F1 /* MediaCommandsService.swift */,
-				8924D189C4B86DF5EC435CC5 /* PerfLog.swift */,
 				197C530468E4F01A6342CA34 /* RSSService.swift */,
 				696C837CD5B88117651C6171 /* WhisperService.swift */,
 			);
@@ -310,7 +307,6 @@
 				A7D6C9AA138C39B992E2120F /* MediaCommandsService.swift in Sources */,
 				96EF7023116053819888719E /* MediaJobs.swift in Sources */,
 				9D76AB1C4F0D55843811578E /* Models.swift in Sources */,
-				9BB2D1907D2D42CA97CF9357 /* PerfLog.swift in Sources */,
 				51548E7E1D932CAA8F7FF7C4 /* PlayerDockView.swift in Sources */,
 				4B29A3705A65CA91209F2372 /* PodeApp.swift in Sources */,
 				1D5A3A948E822E19B1B77B20 /* RSSService.swift in Sources */,
@@ -383,7 +379,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 26;
+				CURRENT_PROJECT_VERSION = 27;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -404,7 +400,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.5.21;
+				MARKETING_VERSION = 0.5.22;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -473,7 +469,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 26;
+				CURRENT_PROJECT_VERSION = 27;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -488,7 +484,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.5.21;
+				MARKETING_VERSION = 0.5.22;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";

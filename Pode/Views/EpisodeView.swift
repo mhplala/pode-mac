@@ -156,14 +156,6 @@ struct EpisodeView: View {
 
     @ViewBuilder
     private var content: some View {
-        // Bump body re-eval counter — surfaces in PerfHUD top-right.
-        let _ = PerfCounters.shared.bodyEval()
-        // Time the body construction. `measureBody` is a no-op-ish
-        // wrapper that brackets the build with DispatchTime.now().
-        // It does NOT capture render time (that's GPU/SwiftUI), but
-        // it does capture every sort/scan/predicate/alloc done inline,
-        // which is where most hidden cost lives.
-        measureBody(.episode) {
         // Outer container is intentionally NOT scrollable. Each inner
         // pane (transcript / description / highlights / AI inspector)
         // handles its own internal scrolling, so the page itself stays
@@ -213,17 +205,6 @@ struct EpisodeView: View {
             Button(t("Cancel", lang), role: .cancel) {}
             Button(t("Remove", lang), role: .destructive) { removeDownload() }
         }
-        // Live perf HUD — top-right corner, only on this view. Numbers
-        // are events/sec for the EpisodeView body, the dock's
-        // ScrubberRow, player ticks, scroll triggers, and active-line
-        // changes. Anything turning red is above a "this should be
-        // quiet" threshold.
-        .overlay(alignment: .topTrailing) {
-            PerfHUD()
-                .padding(.top, 56)
-                .padding(.trailing, 24)
-        }
-        }   // closes measureBody { ... }
     }
 
     // MARK: - Header card
@@ -883,11 +864,9 @@ struct EpisodeView: View {
         // nothing to the dep set — body only re-runs when
         // `activeLineIdx` actually changes (line crossings).
         .onReceive(store.player.timePublisher) { newTime in
-            PerfCounters.shared.tick()
             updateActiveLine(at: newTime, proxy: proxy, ep: ep)
         }
         .onChange(of: activeLineIdx) { _, _ in
-            PerfCounters.shared.activeLineChanged()
             // Active line changed → fire one throttled scroll.
             performAutoScroll(proxy: proxy, ep: ep)
         }
@@ -973,7 +952,6 @@ struct EpisodeView: View {
         if key == lastScrolledKey { return }
         lastScrolledKey = key
         lastScrollAt = now
-        PerfCounters.shared.scrollFired()
         // INSTANT scroll — no withAnimation. The animated version
         // ran a 400ms × 60fps interpolation loop, and on a 2400-row
         // LazyVStack each frame forced SwiftUI to lay out all rows

@@ -1,7 +1,6 @@
 import SwiftUI
 import SwiftData
 import CoreMedia
-import Combine   // ActiveLineMarquee subscribes to AudioPlayerStore.timePublisher
 
 struct PlayerDockView: View {
     @Environment(\.appLanguage) private var lang: AppLanguage
@@ -205,8 +204,6 @@ private struct ScrubberRow: View {
     let store: AppStore
 
     var body: some View {
-        let _ = PerfCounters.shared.dockEval()
-        return measureBody(.scrubber) {
         let dur = max(episode.duration, store.player.duration)
         let wide = dur >= 3600
         let timeWidth: CGFloat = wide ? 64 : 44
@@ -250,7 +247,6 @@ private struct ScrubberRow: View {
                 // trailing edge above.
                 .frame(width: timeWidth, alignment: .trailing)
         }
-        }   // closes measureBody(.scrubber) { ... }
     }
 
     /// Stable-width time format. When the episode is ≥1h we always show
