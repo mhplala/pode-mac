@@ -5,8 +5,27 @@ struct Sidebar: View {
     @Environment(\.brandAccent) private var accent: Color
     @Environment(\.appLanguage) private var lang: AppLanguage
     @Environment(AppStore.self) private var store
-    @Query(sort: [SortDescriptor(\Show.addedAt, order: .reverse)]) private var allShows: [Show]
+    /// Fetch all shows; ordering happens in-memory via `sortedShows`
+    /// below. A SwiftData SortDescriptor can't express "max pubDate
+    /// across a to-many relationship", so we sort once per body
+    /// re-render after the fetch.
+    @Query private var allShows: [Show]
     @FocusState private var searchFocused: Bool
+
+    /// Shows sorted by their newest episode's pubDate, descending.
+    /// Falls back to `addedAt` for shows that haven't surfaced any
+    /// episodes yet (e.g. just subscribed, RSS hasn't loaded), so a
+    /// freshly-added show still lands at the top until its first
+    /// episode arrives.
+    private var sortedShows: [Show] {
+        allShows.sorted { lhs, rhs in
+            latestEpisodeDate(of: lhs) > latestEpisodeDate(of: rhs)
+        }
+    }
+
+    private func latestEpisodeDate(of show: Show) -> Date {
+        show.episodes.map(\.pubDate).max() ?? show.addedAt
+    }
 
     var body: some View {
         @Bindable var store = store
@@ -133,7 +152,7 @@ struct Sidebar: View {
                                 .padding(.top, 4)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        ForEach(allShows) { show in
+                        ForEach(sortedShows) { show in
                             ShowRow(show: show)
                         }
                     }
