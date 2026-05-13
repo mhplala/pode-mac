@@ -484,10 +484,10 @@ enum L10n {
         "speaker":             "说话人",
         "live":                "实时",
 
-        // App auto-update
+        // App auto-update (note: "Download" key already exists earlier
+        // for the website CTA / nav — don't redefine it.)
         "New version available": "有新版本",
         "available":           "可下载",
-        "Download":            "下载",
         "Skip this version":   "跳过这个版本",
         "Later":               "稍后",
         "Check for updates":   "检查更新",

@@ -1,8 +1,8 @@
 {
-  "version": "0.5.28",
-  "build": "33",
-  "downloadURL": "https://podecast.cc/assets/Pode-0.5.28.dmg",
-  "releaseNotes": "Knowledge galaxy now spreads out as your concept library grows, and supports pinch-to-zoom (trackpad) plus a zoom chip in the top-right corner. Click the percentage to reset.",
-  "publishedAt": "2026-05-13T14:36:00Z",
+  "version": "0.5.29",
+  "build": "34",
+  "downloadURL": "https://podecast.cc/assets/Pode-0.5.29.dmg",
+  "releaseNotes": "Hotfix: 0.5.28 crashed on launch in the Chinese language path because of a duplicate key in the localization table. Please install — 0.5.28 is unrecoverable on zh-Hans systems.",
+  "publishedAt": "2026-05-13T14:50:00Z",
   "minimumOS": "14.0"
 }
