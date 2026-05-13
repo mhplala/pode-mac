@@ -1,8 +1,8 @@
 {
-  "version": "0.5.31",
-  "build": "36",
-  "downloadURL": "https://podecast.cc/assets/Pode-0.5.31.dmg",
-  "releaseNotes": "Knowledge galaxy: the +/− and pinch controls now actually loosen the layout — dots inside a cluster fan apart instead of staying glued together while only the empty space grew. Dots and labels keep their pixel size; just the breathing room expands.",
-  "publishedAt": "2026-05-13T15:14:00Z",
+  "version": "0.5.32",
+  "build": "37",
+  "downloadURL": "https://podecast.cc/assets/Pode-0.5.32.dmg",
+  "releaseNotes": "Share links are about half as long now. We were stuffing the summary, duration, and pub date into the URL — but the player already reveals duration when you press play, and the title + artwork carry the rest. Dropping them cut typical share URLs from ~500 chars to ~250.",
+  "publishedAt": "2026-05-13T15:20:00Z",
   "minimumOS": "14.0"
 }

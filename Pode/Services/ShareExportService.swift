@@ -52,26 +52,37 @@ enum ShareExport {
 
         // Short keys keep the URL tweet-friendly. See the JS in
         // `docs/e/index.html` for the matching schema.
+        //
+        // We keep ONLY the fields the share page actually needs to
+        // render the card and press play:
+        //   t  episode title       — shown in the card heading
+        //   a  audio URL           — fed to <audio>
+        //   p  podcast name        — eyebrow above the title
+        //   i  artwork URL         — visual identity in the card
+        //   v  schema version
+        //
+        // Things we deliberately do NOT embed (each was costing
+        // dozens-to-hundreds of URL characters):
+        //   s  summary blurb       — the player + title is enough
+        //                            context; recipients can install
+        //                            Pode if they want the AI summary
+        //   dur duration in seconds — HTML5 <audio> exposes this
+        //                            from the file's own metadata
+        //                            once the user presses play
+        //   d  pub date            — same: not critical for "listen
+        //                            in the browser", and the audio
+        //                            URL itself usually leaks the year
+        //
+        // Dropping those three roughly halved the URL length without
+        // losing anything the user actually sees in the link preview.
         var payload: [String: Any] = [
             "v": 1,
             "t": ep.title,
             "a": ep.audioUrl,
-            "d": ISO8601DateFormatter().string(from: ep.pubDate),
-            "dur": Int(ep.duration),
         ]
         if let show = ep.show {
             if !show.title.isEmpty       { payload["p"] = show.title }
             if !show.artworkUrl.isEmpty  { payload["i"] = show.artworkUrl }
-        }
-        if let summary = ep.aiSummary,
-           !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            // Cap the summary so URLs stay under ~1.5KB even with a
-            // long CDN-style audio URL. 280 chars is enough for a
-            // useful blurb without bloating link previews.
-            let s = summary.trimmingCharacters(in: .whitespacesAndNewlines)
-            payload["s"] = s.count > 280
-                ? String(s.prefix(280)) + "…"
-                : s
         }
 
         guard let json = try? JSONSerialization.data(

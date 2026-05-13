@@ -310,7 +310,10 @@
             art.alt = data.p ? data.p + ' artwork' : 'Podcast artwork';
             art.onerror = () => { art.src = '../assets/icon-1024.png'; };
 
-            // Subtitle = date · duration. Both optional.
+            // Subtitle = date · duration. Both optional. Newer
+            // app builds drop these fields from the URL to keep
+            // share links short, so the sub-line is often empty —
+            // hide it in that case so we don't reserve a blank gap.
             const parts = [];
             if (data.d) {
                 try {
@@ -327,7 +330,12 @@
                 const m = Math.floor((data.dur % 3600) / 60);
                 parts.push(h > 0 ? `${h}h ${m}m` : `${m} min`);
             }
-            $('sub').textContent = parts.join(' · ');
+            const subEl = $('sub');
+            if (parts.length) {
+                subEl.textContent = parts.join(' · ');
+            } else {
+                subEl.hidden = true;
+            }
 
             // Player. preload=metadata is set in HTML so we don't burn
             // bandwidth on visit; the audio only loads on play.
