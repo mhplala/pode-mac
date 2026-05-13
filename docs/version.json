@@ -1,8 +1,8 @@
 {
-  "version": "0.5.29",
-  "build": "34",
-  "downloadURL": "https://podecast.cc/assets/Pode-0.5.29.dmg",
-  "releaseNotes": "Hotfix: 0.5.28 crashed on launch in the Chinese language path because of a duplicate key in the localization table. Please install — 0.5.28 is unrecoverable on zh-Hans systems.",
-  "publishedAt": "2026-05-13T14:50:00Z",
+  "version": "0.5.30",
+  "build": "35",
+  "downloadURL": "https://podecast.cc/assets/Pode-0.5.30.dmg",
+  "releaseNotes": "Shared episodes now open a web player anyone can press play on — no more raw .mp3 attachments. Each shared link doubles as a landing page with artwork, duration, and a one-click install for Pode. Also adds a build-time guard so a duplicate localization key can never crash launch again.",
+  "publishedAt": "2026-05-13T15:10:00Z",
   "minimumOS": "14.0"
 }
