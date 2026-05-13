@@ -330,16 +330,21 @@ private struct Galaxy: View {
     @State private var cachedLayout: GalaxyLayout? = nil
     @State private var cachedKey: String = ""
 
-    // Zoom state. `userZoom` persists across gesture cycles;
-    // `pinchDelta` is the live in-progress magnification value
-    // (resets to 1.0 when the gesture ends, after we fold it into
-    // `userZoom`). `densityScale` is an automatic prefactor that
-    // spreads the canvas as the user accumulates more concepts so
-    // they aren't crammed even at 100% zoom.
-    @State private var userZoom: CGFloat = 1.0
+    // Layout spread state. This isn't visual zoom (we don't .scaleEffect
+    // anything — dots and label fonts stay the same size). It's a
+    // multiplier that gets fed into computeLayout to widen the canvas
+    // AND fan the intra-cluster orbit radius outward by the same factor,
+    // so dots that were kissing at 1x have real breathing room at 2x.
+    //
+    // `userSpread` persists across gesture cycles; `pinchDelta` is the
+    // live in-progress magnification value (resets to 1.0 when the user
+    // lifts their fingers, after we fold it into `userSpread`).
+    // `densitySpread` is an automatic prefactor that pre-loosens the
+    // layout once you accumulate enough concepts that 1x would be tight.
+    @State private var userSpread: CGFloat = 1.0
     @GestureState private var pinchDelta: CGFloat = 1.0
 
-    private var densityScale: CGFloat {
+    private var densitySpread: CGFloat {
         let n = concepts.count
         if n <= 20 { return 1.0 }
         if n <= 40 { return 1.3 }
@@ -347,29 +352,29 @@ private struct Galaxy: View {
         return 2.2
     }
 
-    private var effectiveScale: CGFloat {
-        max(0.5, min(3.0, densityScale * userZoom * pinchDelta))
+    private var effectiveSpread: CGFloat {
+        max(0.5, min(3.0, densitySpread * userSpread * pinchDelta))
     }
 
     var body: some View {
         GeometryReader { outer in
-            let canvasW = max(outer.size.width, outer.size.width * effectiveScale)
-            let canvasH = max(outer.size.height, outer.size.height * effectiveScale)
+            let canvasW = max(outer.size.width, outer.size.width * effectiveSpread)
+            let canvasH = max(outer.size.height, outer.size.height * effectiveSpread)
             ScrollView([.horizontal, .vertical], showsIndicators: false) {
                 galaxyCanvas(width: canvasW, height: canvasH)
                     .frame(width: canvasW, height: canvasH)
             }
-            // Pinch-to-zoom on trackpad. We use @GestureState for the
-            // in-flight delta so it auto-resets when the user lifts
-            // their fingers; the final value gets folded into the
-            // persistent `userZoom` on .onEnded.
+            // Pinch on trackpad to spread the layout. We use @GestureState
+            // for the in-flight delta so it auto-resets when the user
+            // lifts their fingers; the final value gets folded into the
+            // persistent `userSpread` on .onEnded.
             .gesture(
                 MagnificationGesture()
                     .updating($pinchDelta) { value, state, _ in
                         state = value
                     }
                     .onEnded { value in
-                        userZoom = max(0.5, min(3.0, userZoom * value))
+                        userSpread = max(0.5, min(3.0, userSpread * value))
                     }
             )
             .overlay(alignment: .topTrailing) {
@@ -388,7 +393,7 @@ private struct Galaxy: View {
     private var zoomControls: some View {
         HStack(spacing: 2) {
             Button {
-                userZoom = max(0.5, userZoom - 0.2)
+                userSpread = max(0.5, userSpread - 0.2)
             } label: {
                 Image(systemName: "minus")
                     .font(.system(size: 10, weight: .semibold))
@@ -396,21 +401,21 @@ private struct Galaxy: View {
                     .frame(width: 24, height: 24)
             }
             .buttonStyle(.plain)
-            .disabled(effectiveScale <= 0.5 + 0.01)
+            .disabled(effectiveSpread <= 0.5 + 0.01)
 
             Button {
-                userZoom = 1.0
+                userSpread = 1.0
             } label: {
-                Text("\(Int((effectiveScale * 100).rounded()))%")
+                Text("\(Int((effectiveSpread * 100).rounded()))%")
                     .font(.mono(10, weight: .medium))
                     .foregroundColor(Ink.tertiary)
                     .frame(width: 36, height: 24)
             }
             .buttonStyle(.plain)
-            .help("Reset zoom")
+            .help("Reset spread")
 
             Button {
-                userZoom = min(3.0, userZoom + 0.2)
+                userSpread = min(3.0, userSpread + 0.2)
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 10, weight: .semibold))
@@ -418,7 +423,7 @@ private struct Galaxy: View {
                     .frame(width: 24, height: 24)
             }
             .buttonStyle(.plain)
-            .disabled(effectiveScale >= 3.0 - 0.01)
+            .disabled(effectiveSpread >= 3.0 - 0.01)
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 3)
@@ -630,6 +635,23 @@ private struct Galaxy: View {
         let cols = min(clusters.count, 2)
         let rows = max(1, Int(ceil(Double(clusters.count) / Double(cols))))
 
+        // Spread factor — derived from how big the canvas got. Outer
+        // GeometryReader sizes the canvas as `outer × effectiveSpread`,
+        // and outer height is locked at 460pt, so `height / 460` IS
+        // the spread the user dialed in (via pinch / +/− / auto-density).
+        //
+        // We multiply this into the intra-cluster orbit radius so that
+        // when the canvas grows the dots within a cluster fan OUT
+        // proportionally — instead of staying glued in a tight ~80pt
+        // ring while only cluster centers drift apart. Without this,
+        // zooming just made the empty space between clusters bigger;
+        // the actual concept dots were still piled on top of each other.
+        //
+        // Clamp ≥1.0 so a smaller-than-baseline window (e.g. resized
+        // shorter) still uses the original 70-100pt orbit, not a
+        // compressed one that'd cram everything.
+        let spread = max(1.0, Double(height) / 460.0)
+
         var centers: [(String, CGPoint)] = []
         var nodes: [PositionedNode] = []
         var nodesByCluster: [String: [PositionedNode]] = [:]
@@ -647,7 +669,13 @@ private struct Galaxy: View {
             clusterNodes.reserveCapacity(items.count)
             for (j, c) in items.enumerated() {
                 let angle = Double(j) / Double(max(items.count, 1)) * .pi * 2 + Double(cl.count) * 0.7
-                let r: Double = 70 + Double(j % 3) * 22 + Double(j % 2) * 8
+                // Base orbit varies per node so the cluster looks like
+                // an organic constellation (not a tidy circle).
+                // Multiplied by `spread` so the whole ring expands as
+                // the user opens up the layout. Dots and labels keep
+                // their pixel sizes — only the gaps grow.
+                let baseR: Double = 70 + Double(j % 3) * 22 + Double(j % 2) * 8
+                let r = baseR * spread
                 let x = Double(center.x) + cos(angle) * r
                 let y = Double(center.y) + sin(angle) * r
                 let size = 7.0 + Double(min(c.count, 6)) * 1.4
