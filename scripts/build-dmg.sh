@@ -77,6 +77,14 @@ else
     echo "🔑 Identity: $SIGN_IDENTITY  (team $TEAM_ID)"
 fi
 
+# ---- 0. Pre-build sanity checks --------------------------------------------
+# Catch duplicate keys in L10n string tables before we spend ~3 minutes
+# building + notarizing only to ship a binary that SIGTRAPs on launch
+# for whichever language got the duplicate. 0.5.28 took out every
+# zh-Hans user this way; never again.
+echo "🔍 Checking L10n tables for duplicate keys"
+"$ROOT/scripts/check-l10n.sh"
+
 # ---- 1. Regenerate AppIcon -------------------------------------------------
 if [[ -f "$ICON_SRC" ]]; then
     echo "🎨 Generating AppIcon from $ICON_SRC"
