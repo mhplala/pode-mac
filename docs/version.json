@@ -1,8 +1,8 @@
 {
-  "version": "0.5.27",
-  "build": "32",
-  "downloadURL": "https://podecast.cc/assets/Pode-0.5.27.dmg",
-  "releaseNotes": "In-app update notifications. When a new Pode ships, the app now surfaces a small chip in the top-right; click to see the release notes and download. Plus an episode share button (single-episode link, Markdown citation, native share sheet) and transcript export (Plain text, Markdown, SRT).",
-  "publishedAt": "2026-05-13T14:30:00Z",
+  "version": "0.5.28",
+  "build": "33",
+  "downloadURL": "https://podecast.cc/assets/Pode-0.5.28.dmg",
+  "releaseNotes": "Knowledge galaxy now spreads out as your concept library grows, and supports pinch-to-zoom (trackpad) plus a zoom chip in the top-right corner. Click the percentage to reset.",
+  "publishedAt": "2026-05-13T14:36:00Z",
   "minimumOS": "14.0"
 }

@@ -330,11 +330,112 @@ private struct Galaxy: View {
     @State private var cachedLayout: GalaxyLayout? = nil
     @State private var cachedKey: String = ""
 
-    var body: some View {
-        GeometryReader { geo in
-            let layout = resolveLayout(width: geo.size.width, height: geo.size.height)
+    // Zoom state. `userZoom` persists across gesture cycles;
+    // `pinchDelta` is the live in-progress magnification value
+    // (resets to 1.0 when the gesture ends, after we fold it into
+    // `userZoom`). `densityScale` is an automatic prefactor that
+    // spreads the canvas as the user accumulates more concepts so
+    // they aren't crammed even at 100% zoom.
+    @State private var userZoom: CGFloat = 1.0
+    @GestureState private var pinchDelta: CGFloat = 1.0
 
-            ZStack {
+    private var densityScale: CGFloat {
+        let n = concepts.count
+        if n <= 20 { return 1.0 }
+        if n <= 40 { return 1.3 }
+        if n <= 80 { return 1.7 }
+        return 2.2
+    }
+
+    private var effectiveScale: CGFloat {
+        max(0.5, min(3.0, densityScale * userZoom * pinchDelta))
+    }
+
+    var body: some View {
+        GeometryReader { outer in
+            let canvasW = max(outer.size.width, outer.size.width * effectiveScale)
+            let canvasH = max(outer.size.height, outer.size.height * effectiveScale)
+            ScrollView([.horizontal, .vertical], showsIndicators: false) {
+                galaxyCanvas(width: canvasW, height: canvasH)
+                    .frame(width: canvasW, height: canvasH)
+            }
+            // Pinch-to-zoom on trackpad. We use @GestureState for the
+            // in-flight delta so it auto-resets when the user lifts
+            // their fingers; the final value gets folded into the
+            // persistent `userZoom` on .onEnded.
+            .gesture(
+                MagnificationGesture()
+                    .updating($pinchDelta) { value, state, _ in
+                        state = value
+                    }
+                    .onEnded { value in
+                        userZoom = max(0.5, min(3.0, userZoom * value))
+                    }
+            )
+            .overlay(alignment: .topTrailing) {
+                zoomControls
+                    .padding(.top, 10)
+                    .padding(.trailing, 14)
+            }
+        }
+        .frame(height: 460)
+    }
+
+    /// Top-right zoom chip: − / current% (click to reset) / +.
+    /// Mirrors what most Mac canvas apps (Figma, OmniGraffle, Notes)
+    /// put in the same corner so users find it without a tutorial.
+    @ViewBuilder
+    private var zoomControls: some View {
+        HStack(spacing: 2) {
+            Button {
+                userZoom = max(0.5, userZoom - 0.2)
+            } label: {
+                Image(systemName: "minus")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(Ink.secondary)
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plain)
+            .disabled(effectiveScale <= 0.5 + 0.01)
+
+            Button {
+                userZoom = 1.0
+            } label: {
+                Text("\(Int((effectiveScale * 100).rounded()))%")
+                    .font(.mono(10, weight: .medium))
+                    .foregroundColor(Ink.tertiary)
+                    .frame(width: 36, height: 24)
+            }
+            .buttonStyle(.plain)
+            .help("Reset zoom")
+
+            Button {
+                userZoom = min(3.0, userZoom + 0.2)
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(Ink.secondary)
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plain)
+            .disabled(effectiveScale >= 3.0 - 0.01)
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 3)
+        .background(
+            Capsule().fill(.ultraThinMaterial)
+                .overlay(Capsule().fill(Color.white.opacity(0.28)))
+                .overlay(Capsule().stroke(Color.white.opacity(0.5), lineWidth: 1))
+        )
+    }
+
+    /// The actual canvas — pulled out of body so the ScrollView wrapper
+    /// can pass an explicit width/height. computeLayout uses these as
+    /// its working dimensions, so denser concepts get more room.
+    @ViewBuilder
+    private func galaxyCanvas(width: CGFloat, height: CGFloat) -> some View {
+        let layout = resolveLayout(width: width, height: height)
+        ZStack {
                 // Aurora per cluster — purely decorative. SwiftUI hit-tests
                 // shape outlines (NOT visual alpha), so without this each
                 // 340pt aurora swallows hover/tap events for every node
@@ -447,8 +548,6 @@ private struct Galaxy: View {
                         }
                     )
             }
-        }
-        .frame(height: 460)
     }
 
     /// Find which node (if any) the cursor is over. Labels are checked
