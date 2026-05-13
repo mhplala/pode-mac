@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<!--
+  Episode share landing page.
+
+  The Pode Mac app builds URLs of the form:
+
+      https://podecast.cc/e/#d=<base64url(JSON)>
+
+  where the JSON payload carries enough metadata to render this page
+  (title, podcast name, mp3 URL, artwork, duration, optional summary).
+
+  Why the fragment (`#`) instead of a query string:
+    1. The fragment never leaves the browser — episode metadata stays
+       out of GitHub Pages access logs and out of referrer headers
+       when recipients click through to the .dmg download.
+    2. It works as a static GitHub Pages page — no backend needed.
+       Every shared episode is its own free landing page.
+    3. URL length budget is generous (~2KB in practice) so we can
+       embed a short summary blurb without hitting limits.
+
+  The page degrades gracefully: if the payload is missing or
+  malformed, it falls back to a "this looks broken" message + a
+  prompt to download Pode from the homepage.
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Listen — Pode</title>
+    <meta name="description" content="Listen to this episode in the browser, or get Pode for Mac.">
+
+    <meta property="og:title" content="Listen on Pode">
+    <meta property="og:description" content="A native Mac app for podcasts you actually want to remember.">
+    <meta property="og:image" content="../assets/icon-1024.png">
+    <meta property="og:type" content="music.song">
+    <meta name="twitter:card" content="summary_large_image">
+
+    <link rel="icon" href="../assets/icon-1024.png">
+    <link rel="apple-touch-icon" href="../assets/icon-1024.png">
+    <link rel="stylesheet" href="../styles.css">
+    <style>
+        /* Share-page specific overrides — keeps the page focused on
+           the episode card + install CTA, no marketing chrome. */
+        body { background: #f7f5f1; }
+
+        .share-nav {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 22px 32px;
+            max-width: 980px;
+            margin: 0 auto;
+        }
+        .share-nav__brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            text-decoration: none;
+            color: inherit;
+        }
+        .share-nav__brand img { width: 28px; height: 28px; border-radius: 7px; }
+        .share-nav__brand span { font-weight: 600; font-size: 17px; letter-spacing: -0.01em; }
+
+        .share-main {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 12px 24px 80px;
+        }
+
+        .share-card {
+            background: #fff;
+            border-radius: 22px;
+            padding: 28px;
+            box-shadow:
+                0 1px 2px rgba(0, 0, 0, 0.04),
+                0 12px 40px rgba(0, 0, 0, 0.06);
+            display: grid;
+            grid-template-columns: 180px 1fr;
+            gap: 28px;
+            align-items: start;
+        }
+        @media (max-width: 600px) {
+            .share-card {
+                grid-template-columns: 1fr;
+                padding: 20px;
+                gap: 18px;
+            }
+        }
+
+        .share-card__art {
+            width: 100%;
+            aspect-ratio: 1 / 1;
+            object-fit: cover;
+            border-radius: 14px;
+            background: linear-gradient(135deg, #eee, #ddd);
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+        }
+
+        .share-card__show {
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+            color: #8a7a5c;
+            margin: 0 0 6px;
+        }
+        .share-card__title {
+            font-size: 22px;
+            line-height: 1.25;
+            font-weight: 650;
+            letter-spacing: -0.015em;
+            margin: 0 0 8px;
+            color: #1a1a1a;
+        }
+        .share-card__sub {
+            font-size: 13px;
+            color: #888;
+            margin: 0 0 18px;
+        }
+
+        .share-card__player {
+            width: 100%;
+            margin-top: 4px;
+        }
+
+        .share-card__summary {
+            margin-top: 18px;
+            padding-top: 18px;
+            border-top: 1px solid #eee;
+            font-size: 14px;
+            line-height: 1.55;
+            color: #555;
+        }
+
+        .share-cta {
+            margin-top: 40px;
+            text-align: center;
+            padding: 40px 24px;
+            background: #fff;
+            border-radius: 22px;
+            box-shadow:
+                0 1px 2px rgba(0, 0, 0, 0.03),
+                0 8px 32px rgba(0, 0, 0, 0.05);
+        }
+        .share-cta h2 {
+            font-size: 26px;
+            font-weight: 650;
+            letter-spacing: -0.02em;
+            margin: 0 0 12px;
+        }
+        .share-cta h2 em {
+            font-style: normal;
+            background: linear-gradient(180deg, transparent 60%, rgba(180, 140, 90, 0.25) 60%);
+        }
+        .share-cta p {
+            color: #666;
+            font-size: 15px;
+            line-height: 1.55;
+            max-width: 460px;
+            margin: 0 auto 22px;
+        }
+        .share-cta__meta {
+            margin-top: 16px;
+            font-size: 12px;
+            color: #999;
+        }
+
+        .share-empty {
+            max-width: 520px;
+            margin: 80px auto;
+            text-align: center;
+            padding: 0 24px;
+        }
+        .share-empty h1 {
+            font-size: 22px;
+            font-weight: 600;
+            margin: 0 0 12px;
+        }
+        .share-empty p {
+            color: #666;
+            font-size: 15px;
+        }
+        .share-empty a {
+            color: #b8895c;
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .share-footer {
+            text-align: center;
+            padding: 32px 24px 48px;
+            font-size: 12px;
+            color: #999;
+        }
+        .share-footer a { color: inherit; text-decoration: underline; }
+    </style>
+</head>
+<body>
+
+    <nav class="share-nav">
+        <a class="share-nav__brand" href="../">
+            <img src="../assets/icon-128.png" alt="">
+            <span>pode</span>
+        </a>
+        <a class="btn btn--primary" href="../#download" data-i18n-en="Get Pode for Mac" data-i18n-zh="下载 Pode">Get Pode for Mac</a>
+    </nav>
+
+    <!-- Episode card — populated by share.js from the URL fragment. -->
+    <main class="share-main" id="share-card" hidden>
+        <article class="share-card">
+            <img class="share-card__art" id="art" src="" alt="">
+            <div>
+                <p class="share-card__show" id="show"></p>
+                <h1 class="share-card__title" id="title"></h1>
+                <p class="share-card__sub" id="sub"></p>
+                <audio id="player" class="share-card__player" controls preload="metadata"></audio>
+                <p class="share-card__summary" id="summary" hidden></p>
+            </div>
+        </article>
+
+        <!-- Install CTA — every shared episode doubles as a landing
+             page for the Mac app. -->
+        <section class="share-cta">
+            <h2>Want this on your <em>Mac</em>?</h2>
+            <p>
+                Pode is a native macOS podcast app. Every episode is
+                transcribed locally, every line is searchable, and every
+                quote you save lives in a permanent reference library.
+            </p>
+            <a class="btn btn--primary btn--lg" href="../#download" id="install-cta">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px;">
+                    <path d="M7 1.5v8M3.5 6L7 9.5 10.5 6M2 11.5h10"/>
+                </svg>
+                Download Pode — free
+            </a>
+            <p class="share-cta__meta">macOS 14 or later · Apple Silicon · No account required</p>
+        </section>
+    </main>
+
+    <!-- Error state — shown when the fragment is missing/malformed. -->
+    <main class="share-empty" id="share-empty" hidden>
+        <h1>This share link looks malformed.</h1>
+        <p>Head to <a href="../">podecast.cc</a> to download Pode for Mac.</p>
+    </main>
+
+    <footer class="share-footer">
+        Shared via <a href="../">pode</a> · podcasts, with presence
+    </footer>
+
+    <script>
+        /**
+         * Decode the URL fragment and render the episode card.
+         *
+         * Fragment format:  `#d=<base64url(JSON)>`
+         *
+         * JSON schema (v=1):
+         *   t   — episode title              (string, required)
+         *   a   — audio URL (mp3/m4a)        (string, required)
+         *   p   — podcast / show name        (string, optional)
+         *   i   — artwork URL                (string, optional)
+         *   d   — pub date ISO 8601          (string, optional)
+         *   dur — duration in seconds        (number, optional)
+         *   s   — short summary blurb        (string, optional, ≤ ~280 chars)
+         *   v   — schema version             (number, currently 1)
+         *
+         * Anything missing degrades gracefully — we never error on a
+         * missing optional field, only on missing `a` (the audio URL),
+         * since without it there's nothing to play.
+         */
+        (function() {
+            const $ = (id) => document.getElementById(id);
+            const showError = () => { $('share-empty').hidden = false; };
+
+            const hash = window.location.hash.slice(1); // strip '#'
+            if (!hash) return showError();
+
+            const params = new URLSearchParams(hash);
+            const blob = params.get('d');
+            if (!blob) return showError();
+
+            let data;
+            try {
+                // base64url → base64 (RFC 4648 §5)
+                const b64 = blob.replace(/-/g, '+').replace(/_/g, '/');
+                const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+                // atob → bytes → UTF-8 decode → JSON. The TextDecoder
+                // path is unicode-safe so Chinese titles round-trip
+                // correctly (the legacy `unescape(escape(atob(x)))`
+                // hack is deprecated and lossy on some edge cases).
+                const bytes = Uint8Array.from(atob(padded), c => c.charCodeAt(0));
+                const json = new TextDecoder('utf-8').decode(bytes);
+                data = JSON.parse(json);
+            } catch (e) {
+                console.error('share: failed to decode payload', e);
+                return showError();
+            }
+            if (!data || !data.a) return showError();
+
+            // Title — also reflect into <title> for tab/preview text.
+            const title = data.t || 'Episode';
+            $('title').textContent = title;
+            document.title = title + (data.p ? ' — ' + data.p : '') + ' · Pode';
+
+            // Show name (eyebrow above the title).
+            if (data.p) $('show').textContent = data.p;
+
+            // Artwork — fall back to the pode icon if missing/broken.
+            const art = $('art');
+            art.src = data.i || '../assets/icon-1024.png';
+            art.alt = data.p ? data.p + ' artwork' : 'Podcast artwork';
+            art.onerror = () => { art.src = '../assets/icon-1024.png'; };
+
+            // Subtitle = date · duration. Both optional.
+            const parts = [];
+            if (data.d) {
+                try {
+                    const dt = new Date(data.d);
+                    if (!isNaN(dt.getTime())) {
+                        parts.push(dt.toLocaleDateString(undefined, {
+                            year: 'numeric', month: 'short', day: 'numeric'
+                        }));
+                    }
+                } catch (_) {}
+            }
+            if (typeof data.dur === 'number' && data.dur > 0) {
+                const h = Math.floor(data.dur / 3600);
+                const m = Math.floor((data.dur % 3600) / 60);
+                parts.push(h > 0 ? `${h}h ${m}m` : `${m} min`);
+            }
+            $('sub').textContent = parts.join(' · ');
+
+            // Player. preload=metadata is set in HTML so we don't burn
+            // bandwidth on visit; the audio only loads on play.
+            $('player').src = data.a;
+
+            // Optional summary blurb beneath the player.
+            if (data.s) {
+                const sum = $('summary');
+                sum.textContent = data.s;
+                sum.hidden = false;
+            }
+
+            $('share-card').hidden = false;
+        })();
+    </script>
+</body>
+</html>

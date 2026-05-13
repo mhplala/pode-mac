@@ -14,17 +14,79 @@ enum ShareExport {
 
     // MARK: - Episode share
 
-    /// Best "link" we have for an episode — typically the original
-    /// audio URL, which is publicly reachable for any RSS-distributed
-    /// podcast. Falls back to the show's feed URL if audio is missing.
+    /// Best "link" we have for an episode — a podecast.cc/e/ landing
+    /// URL that hosts a web player + install CTA for this episode.
+    /// Falls back to the show's feed URL if there's no audio to share.
+    ///
+    /// Why the landing URL instead of the raw mp3:
+    ///   1. Recipients on any platform can hit Play in the browser —
+    ///      no "download a 200MB file" friction.
+    ///   2. Every shared episode doubles as a free landing page for
+    ///      Pode, with an "Open on Mac" CTA pointing at the .dmg.
+    ///   3. The page renders artwork + title + duration, so iMessage
+    ///      and Twitter previews look like rich link cards instead
+    ///      of a naked .mp3 attachment.
     static func shareURL(for ep: Episode) -> URL? {
-        if let url = URL(string: ep.audioUrl), !ep.audioUrl.isEmpty {
+        if let url = landingURL(for: ep) {
             return url
         }
         if let show = ep.show, let url = URL(string: show.feedUrl) {
             return url
         }
         return nil
+    }
+
+    /// Build the `podecast.cc/e/#d=<base64url(JSON)>` landing URL.
+    ///
+    /// Episode metadata travels in the **fragment** (`#…`) so:
+    ///   - It never hits the server — no GitHub Pages access log
+    ///     entry, no referrer leak when recipients click the CTA.
+    ///   - The static page on `podecast.cc/e/` decodes it client-side
+    ///     and renders the player. No backend, no DB, no per-share
+    ///     hosting cost.
+    ///
+    /// Returns nil when we have no audio URL to play, in which case
+    /// `shareURL(for:)` falls back to the show's feed URL.
+    private static func landingURL(for ep: Episode) -> URL? {
+        guard !ep.audioUrl.isEmpty else { return nil }
+
+        // Short keys keep the URL tweet-friendly. See the JS in
+        // `docs/e/index.html` for the matching schema.
+        var payload: [String: Any] = [
+            "v": 1,
+            "t": ep.title,
+            "a": ep.audioUrl,
+            "d": ISO8601DateFormatter().string(from: ep.pubDate),
+            "dur": Int(ep.duration),
+        ]
+        if let show = ep.show {
+            if !show.title.isEmpty       { payload["p"] = show.title }
+            if !show.artworkUrl.isEmpty  { payload["i"] = show.artworkUrl }
+        }
+        if let summary = ep.aiSummary,
+           !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            // Cap the summary so URLs stay under ~1.5KB even with a
+            // long CDN-style audio URL. 280 chars is enough for a
+            // useful blurb without bloating link previews.
+            let s = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+            payload["s"] = s.count > 280
+                ? String(s.prefix(280)) + "…"
+                : s
+        }
+
+        guard let json = try? JSONSerialization.data(
+            withJSONObject: payload,
+            options: [.sortedKeys]
+        ) else {
+            return nil
+        }
+        // base64url (RFC 4648 §5): URL-safe alphabet, no padding.
+        let b64 = json.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+
+        return URL(string: "\(websiteURL)/e/#d=\(b64)")
     }
 
     /// One-line text suitable for messages / email subject:
