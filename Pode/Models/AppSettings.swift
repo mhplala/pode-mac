@@ -47,7 +47,7 @@ struct AppSettings: Codable, Equatable {
     var customBaseURL: String = ""
     /// Default model name per provider. The active one is picked by `summaryProvider`.
     var openaiSummaryModel: String = "gpt-4o-mini"
-    var geminiModel: String = "gemini-3.1-flash"
+    var geminiModel: String = "gemini-3.1-flash-lite-preview"
     var customModel: String = ""
 
     // MARK: - i18n

@@ -361,7 +361,7 @@ struct SettingsView: View {
             .padding(.bottom, 14)
         field(label: "Model") {
             HStack(spacing: 6) {
-                TextField("gemini-3.1-flash-preview", text: $draft.geminiModel)
+                TextField("gemini-3.1-flash-lite-preview", text: $draft.geminiModel)
                     .textFieldStyle(.plain)
                     .font(.sans(13.5))
                     .padding(.horizontal, 12)
@@ -372,9 +372,14 @@ struct SettingsView: View {
                 // typing still works so new Google models can be used without
                 // shipping an app update.
                 Menu {
-                    Section("3.1 (newest)") {
-                        Button("gemini-3.1-flash-preview · default")        { draft.geminiModel = "gemini-3.1-flash-preview" }
-                        Button("gemini-3.1-flash-lite-preview · cheapest")  { draft.geminiModel = "gemini-3.1-flash-lite-preview" }
+                    Section("3.1 (newest, preview)") {
+                        Button("gemini-3.1-pro-preview")              { draft.geminiModel = "gemini-3.1-pro-preview" }
+                        Button("gemini-3.1-flash-lite · stable")      { draft.geminiModel = "gemini-3.1-flash-lite" }
+                        Button("gemini-3.1-flash-lite-preview · default") { draft.geminiModel = "gemini-3.1-flash-lite-preview" }
+                        Button("gemini-3.1-flash-image-preview")      { draft.geminiModel = "gemini-3.1-flash-image-preview" }
+                    }
+                    Section("3") {
+                        Button("gemini-3-flash-preview")              { draft.geminiModel = "gemini-3-flash-preview" }
                     }
                     Section("2.5") {
                         Button("gemini-2.5-pro")                    { draft.geminiModel = "gemini-2.5-pro" }

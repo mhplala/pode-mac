@@ -32,7 +32,7 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .anthropic: return "claude-haiku-4-5-20251001"
         case .openai:    return "gpt-4o-mini"
-        case .gemini:    return "gemini-3.1-flash"
+        case .gemini:    return "gemini-3.1-flash-lite-preview"
         case .custom:    return ""
         }
     }

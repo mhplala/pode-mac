@@ -298,6 +298,18 @@ final class AppStore {
             s.localWhisperModel = "openai_whisper-large-v3-v20240930_turbo"
             saveSettings(s)
         }
+        // Earlier builds defaulted to non-existent Gemini model ids
+        // (e.g. "gemini-3.1-flash", "gemini-3.1-flash-preview"). Map
+        // them to the closest real Gemini 3.1 model so the next API
+        // call doesn't 404. Users on a real id are left untouched.
+        let bogusGemini: Set<String> = [
+            "gemini-3.1-flash",
+            "gemini-3.1-flash-preview",
+        ]
+        if bogusGemini.contains(s.geminiModel) {
+            s.geminiModel = "gemini-3.1-flash-lite-preview"
+            saveSettings(s)
+        }
         self.settings = s
         // Restore the user's preferred playback rate on launch so the
         // player picks up where they left off across sessions.
