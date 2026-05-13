@@ -84,7 +84,7 @@ const ZH = {
     "cta.title.em":           "免费",
     "cta.title.after":        "。本地。属于你。",
     "cta.sub":                "为 macOS 14 及以上而生。免费，无需注册。",
-    "cta.btn":                "下载 Pode 0.5.23",
+    "cta.btn":                "下载 Pode 0.5.24",
     "cta.req":                "macOS 14 及以上 · Apple Silicon",
 
     // Footer

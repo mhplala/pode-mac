@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		016631DAB9812F48A17366EA /* ShareExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BB94B6FC3A96DBA02BD3AE2 /* ShareExportService.swift */; };
 		0F0B1EE44EF9561DB002E86B /* TaskPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = 545A855C73A37EB7598DBA52 /* TaskPill.swift */; };
 		10DB10F07F62E51E3EB63FA1 /* Sidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF8022007F2145E0BF7999E5 /* Sidebar.swift */; };
 		133BF6BAF2C4C94EDA1FEE24 /* BrowseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8FCBF7AAB4890BB82FBD189 /* BrowseView.swift */; };
@@ -60,6 +61,7 @@
 		5B0FFB216DE17247EC8A4704 /* PlayerDockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerDockView.swift; sourceTree = "<group>"; };
 		696C837CD5B88117651C6171 /* WhisperService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperService.swift; sourceTree = "<group>"; };
 		69AFADA1494B3E4C85908CCB /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
+		6BB94B6FC3A96DBA02BD3AE2 /* ShareExportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareExportService.swift; sourceTree = "<group>"; };
 		6C6308114BAD9C28ADF9B1F1 /* MediaCommandsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaCommandsService.swift; sourceTree = "<group>"; };
 		79AA07FA57730C5CBCB693E9 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		7C014A2432D04AED7B87342D /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -183,6 +185,7 @@
 				59C11FADA69066F4C30C17FC /* LocalWhisperService.swift */,
 				6C6308114BAD9C28ADF9B1F1 /* MediaCommandsService.swift */,
 				197C530468E4F01A6342CA34 /* RSSService.swift */,
+				6BB94B6FC3A96DBA02BD3AE2 /* ShareExportService.swift */,
 				696C837CD5B88117651C6171 /* WhisperService.swift */,
 			);
 			path = Services;
@@ -312,6 +315,7 @@
 				1D5A3A948E822E19B1B77B20 /* RSSService.swift in Sources */,
 				CC89D217FD691E589EDF62DE /* SearchView.swift in Sources */,
 				2BE0404EE17015D44041BC4D /* SettingsView.swift in Sources */,
+				016631DAB9812F48A17366EA /* ShareExportService.swift in Sources */,
 				10DB10F07F62E51E3EB63FA1 /* Sidebar.swift in Sources */,
 				29A5D234C4D2F4BEC1A4F35E /* TaskCenter.swift in Sources */,
 				0F0B1EE44EF9561DB002E86B /* TaskPill.swift in Sources */,
@@ -379,7 +383,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 28;
+				CURRENT_PROJECT_VERSION = 29;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -400,7 +404,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.5.23;
+				MARKETING_VERSION = 0.5.24;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -469,7 +473,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 28;
+				CURRENT_PROJECT_VERSION = 29;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -484,7 +488,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.5.23;
+				MARKETING_VERSION = 0.5.24;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";

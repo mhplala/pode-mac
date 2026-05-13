@@ -484,6 +484,18 @@ enum L10n {
         "speaker":             "说话人",
         "live":                "实时",
 
+        // EpisodeView — share / export menu
+        "Share":               "分享",
+        "Copy link":           "复制链接",
+        "Link copied":         "已复制链接",
+        "Copy as Markdown":    "复制为 Markdown",
+        "Markdown copied":     "已复制 Markdown",
+        "Share…":              "分享…",
+        "Export transcript":   "导出字幕",
+        "Plain text (.txt)":   "纯文本（.txt）",
+        "Markdown (.md)":      "Markdown（.md）",
+        "Subtitle (.srt)":     "字幕（.srt）",
+
         // Settings → About
         "About":               "关于",
         "Pode is open infrastructure on the shoulders of open-source. These are the libraries that make it work.":

@@ -239,6 +239,7 @@ struct EpisodeView: View {
 
                     downloadButton(ep: ep)
                     transcribeButton(ep: ep)
+                    shareButton(ep: ep)
 
                     Spacer()
                 }
@@ -322,6 +323,103 @@ struct EpisodeView: View {
             .fixedSize(horizontal: true, vertical: false)
         }
         .buttonStyle(GhostButtonStyle())
+    }
+
+    /// Share / export entry point. Single button on the header that
+    /// expands into a menu — top half is episode-level sharing
+    /// (link, markdown citation, native share sheet), bottom half is
+    /// transcript export (plain text / markdown / SRT). The export
+    /// items are disabled when the episode hasn't been transcribed.
+    @ViewBuilder
+    private func shareButton(ep: Episode) -> some View {
+        let url: URL? = ShareExport.shareURL(for: ep)
+        let hasTranscript = !ep.transcriptLines.isEmpty
+        Menu {
+            // Episode share
+            Button {
+                ShareExport.copyLinkToPasteboard(for: ep)
+                store.toast(t("Link copied", lang))
+            } label: {
+                Label(t("Copy link", lang), systemImage: "link")
+            }
+            .disabled(url == nil)
+
+            Button {
+                ShareExport.copyMarkdownToPasteboard(for: ep)
+                store.toast(t("Markdown copied", lang))
+            } label: {
+                Label(t("Copy as Markdown", lang), systemImage: "doc.on.clipboard")
+            }
+
+            if let url {
+                Divider()
+                // Native macOS share sheet (AirDrop / Mail / Messages /
+                // Notes / etc). ShareLink delivers a stock label by
+                // default; we wrap with our own Label for consistency.
+                ShareLink(item: url,
+                          subject: Text(ShareExport.shareSubject(for: ep)),
+                          message: Text(ShareExport.shareBody(for: ep))) {
+                    Label(t("Share…", lang), systemImage: "square.and.arrow.up")
+                }
+            }
+
+            Divider()
+
+            // Transcript export
+            Section(t("Export transcript", lang)) {
+                Button {
+                    exportTranscript(ep: ep, format: .plainText)
+                } label: {
+                    Label(t("Plain text (.txt)", lang), systemImage: "doc.plaintext")
+                }
+                .disabled(!hasTranscript)
+
+                Button {
+                    exportTranscript(ep: ep, format: .markdown)
+                } label: {
+                    Label(t("Markdown (.md)", lang), systemImage: "doc.text")
+                }
+                .disabled(!hasTranscript)
+
+                Button {
+                    exportTranscript(ep: ep, format: .srt)
+                } label: {
+                    Label(t("Subtitle (.srt)", lang), systemImage: "captions.bubble")
+                }
+                .disabled(!hasTranscript)
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "square.and.arrow.up")
+                Text(t("Share", lang)).lineLimit(1)
+            }
+            .frame(minWidth: 80)
+            .fixedSize(horizontal: true, vertical: false)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+
+    /// Materialize the chosen transcript format and present a Save
+    /// panel. Sort runs off-main via Task.detached so a 2400-row
+    /// episode doesn't drop a frame opening the share menu.
+    private func exportTranscript(ep: Episode, format: ShareExport.TranscriptFormat) {
+        // Snapshot what we need on main, then build off-main.
+        let title = ep.title
+        let suggestedName = ShareExport.suggestedFilename(for: ep)
+        // Reuse the cached sorted-lines if it's populated and the
+        // episode is the one we have cached for; otherwise fall back
+        // to a fresh sort.
+        let lines: [TranscriptLineModel] = ep.transcriptLines.sorted { $0.t < $1.t }
+        let epRef = ep
+        Task { @MainActor in
+            let content = await Task.detached(priority: .userInitiated) {
+                ShareExport.transcriptExport(ep: epRef, format: format, sortedLines: lines)
+            }.value
+            ShareExport.saveToFile(content, defaultName: suggestedName, format: format)
+            _ = title  // silence unused — useful for future logging
+        }
     }
 
     /// First-time user with the local engine sees an inline model picker;
