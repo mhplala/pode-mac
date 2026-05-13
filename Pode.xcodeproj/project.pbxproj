@@ -30,6 +30,7 @@
 		631E1BF8DF8C9DC3ED3041BA /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69AFADA1494B3E4C85908CCB /* DesignSystem.swift */; };
 		6E3E40A93BF6923506917B27 /* Contents.json in Resources */ = {isa = PBXBuildFile; fileRef = E1846CBD3FBDC5B2F115F119 /* Contents.json */; };
 		8414413BC7E9F81D1FB3AA0E /* AppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC15CD6703202E2BC755FC85 /* AppStore.swift */; };
+		8AD1A41A77A79B73B66FA312 /* UpdateChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 074B3DFB15CB41A7099DA84B /* UpdateChecker.swift */; };
 		8EA2466A4464D89920E21A63 /* WhisperService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 696C837CD5B88117651C6171 /* WhisperService.swift */; };
 		96EF7023116053819888719E /* MediaJobs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D73F5E54EB1586403ABA788 /* MediaJobs.swift */; };
 		9D76AB1C4F0D55843811578E /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AF80B8613BAD3E85AC7BCAB /* Models.swift */; };
@@ -46,6 +47,7 @@
 
 /* Begin PBXFileReference section */
 		06550C5EEF395F90D2DD7AA4 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		074B3DFB15CB41A7099DA84B /* UpdateChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateChecker.swift; sourceTree = "<group>"; };
 		07AE32732521BDECD3029A5A /* HTMLStripper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTMLStripper.swift; sourceTree = "<group>"; };
 		13D7B5CD75D51B41E79D5D44 /* L10n.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = L10n.swift; sourceTree = "<group>"; };
 		197C530468E4F01A6342CA34 /* RSSService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RSSService.swift; sourceTree = "<group>"; };
@@ -186,6 +188,7 @@
 				6C6308114BAD9C28ADF9B1F1 /* MediaCommandsService.swift */,
 				197C530468E4F01A6342CA34 /* RSSService.swift */,
 				6BB94B6FC3A96DBA02BD3AE2 /* ShareExportService.swift */,
+				074B3DFB15CB41A7099DA84B /* UpdateChecker.swift */,
 				696C837CD5B88117651C6171 /* WhisperService.swift */,
 			);
 			path = Services;
@@ -319,6 +322,7 @@
 				10DB10F07F62E51E3EB63FA1 /* Sidebar.swift in Sources */,
 				29A5D234C4D2F4BEC1A4F35E /* TaskCenter.swift in Sources */,
 				0F0B1EE44EF9561DB002E86B /* TaskPill.swift in Sources */,
+				8AD1A41A77A79B73B66FA312 /* UpdateChecker.swift in Sources */,
 				8EA2466A4464D89920E21A63 /* WhisperService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -383,7 +387,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 31;
+				CURRENT_PROJECT_VERSION = 32;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -404,7 +408,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.5.26;
+				MARKETING_VERSION = 0.5.27;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -473,7 +477,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 31;
+				CURRENT_PROJECT_VERSION = 32;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -488,7 +492,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.5.26;
+				MARKETING_VERSION = 0.5.27;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";

@@ -1,0 +1,8 @@
+{
+  "version": "0.5.27",
+  "build": "32",
+  "downloadURL": "https://podecast.cc/assets/Pode-0.5.27.dmg",
+  "releaseNotes": "In-app update notifications. When a new Pode ships, the app now surfaces a small chip in the top-right; click to see the release notes and download. Plus an episode share button (single-episode link, Markdown citation, native share sheet) and transcript export (Plain text, Markdown, SRT).",
+  "publishedAt": "2026-05-13T14:30:00Z",
+  "minimumOS": "14.0"
+}

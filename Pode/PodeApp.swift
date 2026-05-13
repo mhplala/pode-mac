@@ -9,6 +9,9 @@ struct PodeApp: App {
     /// survive the user navigating away from the episode page.
     @State private var downloads: DownloadStore
     @State private var transcribes: TranscribeStore
+    /// Polls podecast.cc/version.json on launch + every 24h so the UI
+    /// can surface "new version available" in-app.
+    @State private var updater: UpdateChecker
 
     init() {
         // Generous URLCache so cover artwork doesn't refetch every time the
@@ -36,6 +39,7 @@ struct PodeApp: App {
         let dl = DownloadStore()
         _downloads = State(initialValue: dl)
         _transcribes = State(initialValue: TranscribeStore(downloadStore: dl))
+        _updater = State(initialValue: UpdateChecker())
     }
 
     var body: some Scene {
@@ -44,6 +48,7 @@ struct PodeApp: App {
                 .environment(store)
                 .environment(downloads)
                 .environment(transcribes)
+                .environment(updater)
                 .modelContainer(modelContainer)
                 // Min width sized so the Episode page's 2-column layout
                 // (header on top + tabs flex + AI 380 + sidebar) always fits.
@@ -57,6 +62,13 @@ struct PodeApp: App {
                 .preferredColorScheme(.light)
                 .onAppear {
                     store.attach(modelContainer.mainContext)
+                    // Fire the first update check shortly after launch
+                    // so we don't compete with the user's first frame
+                    // for main-thread time.
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(3))
+                        await updater.checkIfDue()
+                    }
                 }
         }
         .windowStyle(.hiddenTitleBar)

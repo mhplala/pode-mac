@@ -5,6 +5,7 @@ struct SettingsView: View {
     @Environment(\.brandAccent) private var accent: Color
     @Environment(\.appLanguage) private var lang: AppLanguage
     @Environment(AppStore.self) private var store
+    @Environment(UpdateChecker.self) private var updater
 
     @State private var draft: AppSettings = AppSettings()
     @State private var showOpenAIKey = false
@@ -726,6 +727,13 @@ struct SettingsView: View {
                 .lineSpacing(2)
                 .padding(.bottom, 14)
 
+            // Update-check row. Manual "Check now" works regardless
+            // of when the periodic 24h check last fired. If a newer
+            // version is already known, the row inlines a Download
+            // CTA so the user doesn't have to also dismiss the
+            // floating chip.
+            updateRow
+
             HStack(spacing: 8) {
                 Text("Pode v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")")
                     .font(.mono(11))
@@ -738,6 +746,54 @@ struct SettingsView: View {
         }
         .padding(28)
         .glass(.panel)
+    }
+
+    @ViewBuilder
+    private var updateRow: some View {
+        HStack(spacing: 10) {
+            if let update = updater.available {
+                Image(systemName: "arrow.down.circle.fill")
+                    .foregroundColor(accent)
+                Text("Pode \(update.version) \(t("available", lang))")
+                    .font(.sans(12.5, weight: .medium))
+                    .foregroundColor(Ink.primary)
+                Spacer()
+                Button {
+                    updater.openDownload()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.down").font(.system(size: 10))
+                        Text(t("Download", lang))
+                    }
+                }
+                .buttonStyle(TextButtonStyle())
+            } else {
+                Image(systemName: "checkmark.circle")
+                    .foregroundColor(Ink.tertiary)
+                Text(t("You're on the latest version.", lang))
+                    .font(.sans(12.5))
+                    .foregroundColor(Ink.tertiary)
+                Spacer()
+                Button {
+                    Task { await updater.checkNow() }
+                } label: {
+                    HStack(spacing: 4) {
+                        if updater.isChecking {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .scaleEffect(0.7)
+                        } else {
+                            Image(systemName: "arrow.clockwise").font(.system(size: 10))
+                        }
+                        Text(t("Check for updates", lang))
+                    }
+                }
+                .buttonStyle(TextButtonStyle())
+                .disabled(updater.isChecking)
+            }
+        }
+        .padding(.vertical, 8)
+        .padding(.bottom, 8)
     }
 
     private func field<C: View>(label: String, @ViewBuilder content: () -> C) -> some View {

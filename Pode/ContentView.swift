@@ -59,6 +59,8 @@ private struct TrafficLightPositioner: NSViewRepresentable {
 
 struct ContentView: View {
     @Environment(AppStore.self) private var store
+    @Environment(UpdateChecker.self) private var updater
+    @State private var showingUpdateAlert = false
 
     private var currentLanguage: AppLanguage {
         AppLanguage(rawValue: store.settings.appLanguage) ?? .auto
@@ -134,6 +136,39 @@ struct ContentView: View {
             // After tuning by eye, 4 looks right.
             TrafficLightPositioner(target: CGPoint(x: 22, y: -2))
         )
+        // Update-available chip — floats top-right of the window.
+        // Only appears when `UpdateChecker` has detected a newer
+        // version. Dismissible via the alert that the click opens.
+        .overlay(alignment: .topTrailing) {
+            if let update = updater.available {
+                UpdateChip(version: update.version,
+                           lang: currentLanguage,
+                           onClick: { showingUpdateAlert = true })
+                    .padding(.top, 14)
+                    .padding(.trailing, 18)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.smooth(duration: 0.35), value: updater.available)
+        .alert(
+            t("New version available", currentLanguage),
+            isPresented: $showingUpdateAlert,
+            presenting: updater.available
+        ) { update in
+            Button(t("Download", currentLanguage)) {
+                updater.openDownload()
+            }
+            Button(t("Skip this version", currentLanguage), role: .destructive) {
+                updater.skipCurrent()
+            }
+            Button(t("Later", currentLanguage), role: .cancel) {}
+        } message: { update in
+            if update.releaseNotes.isEmpty {
+                Text("Pode \(update.version)")
+            } else {
+                Text("Pode \(update.version)\n\n\(update.releaseNotes)")
+            }
+        }
     }
 
     @ViewBuilder
@@ -188,5 +223,46 @@ private struct BloomLayer: View, Equatable {
         lhs.accentHex == rhs.accentHex &&
         lhs.strength == rhs.strength &&
         lhs.secondary == rhs.secondary
+    }
+}
+
+/// Floating "new version available" chip. Tap to open the alert with
+/// release notes + Download/Skip/Later. Renders only when
+/// `UpdateChecker.available != nil`.
+private struct UpdateChip: View {
+    let version: String
+    let lang: AppLanguage
+    let onClick: () -> Void
+
+    @Environment(\.brandAccent) private var accent: Color
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: onClick) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(accent)
+                Text("Pode \(version)")
+                    .font(.mono(11, weight: .semibold))
+                    .foregroundColor(Ink.primary)
+                Text(t("available", lang))
+                    .font(.sans(11))
+                    .foregroundColor(Ink.tertiary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(
+                Capsule()
+                    .fill(.ultraThinMaterial)
+                    .overlay(Capsule().fill(Color.white.opacity(hovering ? 0.4 : 0.28)))
+                    .overlay(Capsule().stroke(Color.white.opacity(0.6), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 4)
+            )
+            .scaleEffect(hovering ? 1.02 : 1.0)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.15), value: hovering)
     }
 }
